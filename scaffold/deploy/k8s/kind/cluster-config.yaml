@@ -1,0 +1,11 @@
+# Kind cluster: 1 control-plane + 2 worker nodes.
+# Create: kind create cluster --config scaffold/deploy/k8s/kind/cluster-config.yaml --name roadmap
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+name: roadmap
+
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

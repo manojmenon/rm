@@ -1,0 +1,9 @@
+# Optional: add to backend deployment template.spec.containers[0].resources for HPA
+# Uncomment and merge into backend/deployment.yaml or apply via patch.
+# resources:
+#   requests:
+#     cpu: 100m
+#     memory: 128Mi
+#   limits:
+#     cpu: 500m
+#     memory: 512Mi

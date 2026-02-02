@@ -1,0 +1,19 @@
+# Non-sensitive app config (aligned with docker-compose env).
+# Secrets (DB password, JWT) are in secret.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: roadmap-config
+  namespace: roadmap
+  labels:
+    app.kubernetes.io/name: roadmap
+data:
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_USER: "postgres"
+  DB_NAME: "roadmap"
+  DB_SSLMODE: "disable"
+  PORT: "8080"
+  NEXT_PUBLIC_API_URL: "http://localhost:8080"
+  BACKEND_URL: "http://backend:8080"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: promtail
+  namespace: roadmap
+  labels:
+    app: promtail
+    app.kubernetes.io/name: roadmap
+spec:
+  ports:
+    - port: 9080
+      targetPort: 9080
+      name: http
+  selector:
+    app: promtail
+  clusterIP: None

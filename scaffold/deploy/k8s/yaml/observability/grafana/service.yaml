@@ -1,0 +1,18 @@
+# Grafana: ClusterIP; use port-forward for port 3001 (NodePort range is 30000-32767).
+# Access from any IP: kubectl port-forward --address 0.0.0.0 -n roadmap svc/grafana 3001:3000
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: roadmap
+  labels:
+    app: grafana
+    app.kubernetes.io/name: roadmap
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  selector:
+    app: grafana

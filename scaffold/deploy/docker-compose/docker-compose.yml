@@ -1,0 +1,195 @@
+# Run from repo root: docker compose -f scaffold/deploy/docker-compose/docker-compose.yml --project-directory . up -d
+# Without --profile observability: only postgres, seed, backend, frontend start (for deploy test).
+# With --profile observability: also loki, promtail, tempo, otel-collector, prometheus, grafana.
+# Build context must be . (repo root when run from root); dockerfile paths relative to context.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: roadmap
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  seed:
+    build:
+      context: .
+      dockerfile: scaffold/deploy/docker-compose/Dockerfile.seed
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: roadmap
+      DB_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - app
+
+  backend:
+    build:
+      context: .
+      dockerfile: scaffold/deploy/docker-compose/Dockerfile.backend
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: roadmap
+      DB_SSLMODE: disable
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    networks:
+      - app
+
+  frontend:
+    build:
+      context: .
+      dockerfile: scaffold/deploy/docker-compose/Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8080}
+    depends_on:
+      - backend
+    networks:
+      - app
+
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:2.9.3
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./scaffold/config/logs/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3100/ready 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app
+
+  promtail:
+    profiles: ["observability"]
+    image: grafana/promtail:3.0.0
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    environment:
+      DOCKER_API_VERSION: "1.44"
+    volumes:
+      - ./scaffold/config/logs/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - app
+
+  tempo:
+    profiles: ["observability"]
+    image: grafana/tempo:2.3.1
+    command: [ "-config.file=/etc/tempo/tempo-config.yaml" ]
+    volumes:
+      - ./scaffold/config/traces/tempo-config.yaml:/etc/tempo/tempo-config.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3200/ready 2>/dev/null || nc -z 127.0.0.1 3200 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      - app
+
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./scaffold/config/traces/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    depends_on:
+      tempo:
+        condition: service_healthy
+    networks:
+      - app
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v2.47.0
+    volumes:
+      - ./scaffold/config/metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    depends_on:
+      - backend
+      - otel-collector
+    restart: unless-stopped
+    networks:
+      - app
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:10.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./scaffold/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  grafana_data:
+  loki_data:
+  tempo_data:

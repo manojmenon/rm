@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: roadmap
+  labels:
+    app: otel-collector
+    app.kubernetes.io/name: roadmap
+spec:
+  ports:
+    - port: 4317
+      targetPort: 4317
+      name: otlp-grpc
+    - port: 4318
+      targetPort: 4318
+      name: otlp-http
+    - port: 8889
+      targetPort: 8889
+      name: metrics
+  selector:
+    app: otel-collector

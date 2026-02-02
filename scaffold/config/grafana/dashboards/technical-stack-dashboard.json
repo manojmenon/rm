@@ -1,0 +1,318 @@
+{
+  "annotations": { "list": [] },
+  "description": "Product Roadmap technical stack: Backend (Go/Gin/GORM), Frontend (Next.js), PostgreSQL, Observability (Loki, Tempo, Prometheus, OTEL Collector, Promtail).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Explore Prometheus",
+      "tooltip": "",
+      "type": "link",
+      "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22prometheus%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Explore Loki",
+      "tooltip": "",
+      "type": "link",
+      "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22backend%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Explore Tempo",
+      "tooltip": "",
+      "type": "link",
+      "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Technical stack overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "id": 101,
+      "options": {
+        "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+        "content": "**Backend**\n• Go 1.22+\n• Gin (HTTP)\n• GORM (ORM)\n• JWT auth\n• RBAC (superadmin / admin / owner / user)\n• zap (structured logs → stdout)\n• OpenTelemetry (traces → OTEL Collector)\n• Rate limiting, pagination\n• Port: 8080",
+        "mode": "markdown"
+      },
+      "title": "Backend",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "id": 102,
+      "options": {
+        "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+        "content": "**Frontend**\n• Next.js 14\n• TypeScript\n• Tailwind CSS\n• React Query, Zustand\n• OpenTelemetry API (useTrace)\n• DHL branding (red/yellow)\n• Port: 3000",
+        "mode": "markdown"
+      },
+      "title": "Frontend",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 },
+      "id": 103,
+      "options": {
+        "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+        "content": "**Database**\n• PostgreSQL 16\n• Soft deletes, JSONB\n• audit_logs, activity_logs\n• Indexes, foreign keys\n• Port: 5432",
+        "mode": "markdown"
+      },
+      "title": "Database",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 },
+      "id": 104,
+      "options": {
+        "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+        "content": "**Observability**\n• **Loki** – logs (Promtail → Docker logs)\n• **Tempo** – traces (Backend OTLP → OTEL Collector → Tempo)\n• **Prometheus** – metrics (backend /metrics, otel-collector 8889)\n• **Grafana** – dashboards, Explore",
+        "mode": "markdown"
+      },
+      "title": "Observability",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "id": 105,
+      "panels": [],
+      "title": "Service health (Prometheus)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": "Down" }, "type": "value" },
+            { "options": { "1": "Up" }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        { "expr": "up{job=\"roadmap-backend\"}", "legendFormat": "Backend", "refId": "A" }
+      ],
+      "title": "Backend up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": "Down" }, "type": "value" },
+            { "options": { "1": "Up" }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        { "expr": "up{job=\"otel-collector\"}", "legendFormat": "OTEL Collector", "refId": "A" }
+      ],
+      "title": "OTEL Collector up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[5m])) by (job)",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Request rate (if instrumented)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 106,
+      "panels": [],
+      "title": "Logs (Loki)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 },
+      "id": 4,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{service=\"backend\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend logs",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "id": 107,
+      "panels": [],
+      "title": "Traces (Tempo)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "id": 5,
+      "options": {
+        "deduplication": true,
+        "showSpanFilterSection": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceqlSearch",
+          "refId": "A"
+        }
+      ],
+      "title": "Trace search",
+      "type": "traces"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "id": 108,
+      "panels": [],
+      "title": "Quick links",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 33 },
+      "id": 6,
+      "options": {
+        "links": [
+          {
+            "title": "Explore Prometheus",
+            "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22prometheus%22%7D",
+            "targetBlank": false
+          },
+          {
+            "title": "Explore Loki (backend logs)",
+            "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22loki%22%2C%22queries%22%3A%5B%7B%22expr%22%3A%22%7Bservice%3D%5C%22backend%5C%22%7D%22%7D%5D%7D",
+            "targetBlank": false
+          },
+          {
+            "title": "Explore Tempo (traces)",
+            "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%7D",
+            "targetBlank": false
+          }
+        ],
+        "mode": "list"
+      },
+      "title": "Explore datasources",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["roadmap", "technical-stack"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "Prometheus", "value": "prometheus" },
+        "hide": 0,
+        "includeAll": false,
+        "name": "prometheus_ds",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": { "selected": true, "text": "Loki", "value": "loki" },
+        "hide": 0,
+        "includeAll": false,
+        "name": "loki_ds",
+        "options": [],
+        "query": "loki",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": { "selected": true, "text": "Tempo", "value": "tempo" },
+        "hide": 0,
+        "includeAll": false,
+        "name": "tempo_ds",
+        "options": [],
+        "query": "tempo",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Technical stack",
+  "uid": "technical-stack",
+  "version": 1,
+  "weekStart": ""
+}

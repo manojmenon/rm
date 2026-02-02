@@ -1,0 +1,490 @@
+{
+  "annotations": { "list": [] },
+  "description": "Data flow across the Product Roadmap stack: request flow (Frontend → Backend → PostgreSQL), log flow (Backend → Promtail → Loki), trace flow (Backend → OTEL Collector → Tempo), and metrics flow (Prometheus).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Explore Prometheus",
+      "type": "link",
+      "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22prometheus%22%7D"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Explore Loki",
+      "type": "link",
+      "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22loki%22%7D"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Explore Tempo",
+      "type": "link",
+      "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22tempo%22%7D"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 200,
+      "panels": [],
+      "title": "Data flow overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 201,
+      "options": {
+        "content": "**Application request flow**\n\n```\nBrowser  →  Frontend (:3000)  →  Backend API (:8080)  →  PostgreSQL (:5432)\n                ↑                      ↑\n         Next.js proxy            Gin + GORM\n         /api/* → backend         JWT, RBAC, audit\n```\n\n• Frontend proxies `/api/*` to Backend.\n• Backend reads/writes: products, users, milestones, audit_logs, activity_logs, notifications, groups.",
+        "mode": "markdown"
+      },
+      "title": "Request flow (application)",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 202,
+      "options": {
+        "content": "**Observability data flow**\n\n**Logs:**\n`Backend (stdout) → Docker logs → Promtail → Loki (:3100)`\n\n**Traces:**\n`Backend (OTLP HTTP :4318) → OTEL Collector → Tempo (:4317)`\n\n**Metrics:**\n`Prometheus` scrapes:\n• `backend:8080/metrics` (job: roadmap-backend)\n• `otel-collector:8889/metrics` (job: otel-collector, namespace: roadmap)",
+        "mode": "markdown"
+      },
+      "title": "Log, trace & metrics flow",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 9 },
+      "id": 203,
+      "options": {
+        "content": "**Data stores (PostgreSQL)**\n\n• **products**, product_versions, product_version_dependencies\n• **milestones**, dependencies\n• **users**, groups, org (holding_companies, companies, functions, departments, teams)\n• **audit_logs** (who changed what)\n• **activity_logs** (login, logout, create/save/delete)\n• **notifications**, product_requests, product_deletion_requests",
+        "mode": "markdown"
+      },
+      "title": "Persisted data",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 9 },
+      "id": 204,
+      "options": {
+        "content": "**Ports**\n\n| Service    | Port  | Purpose        |\n|-----------|-------|----------------|\n| Frontend  | 3000  | Next.js app    |\n| Backend   | 8080  | Gin API + /metrics |\n| Postgres  | 5432  | DB             |\n| Loki      | 3100  | Log storage    |\n| Tempo     | 3200  | Trace storage  |\n| Prometheus| 9090 | Metrics        |\n| Grafana   | 3001  | Dashboards     |\n| OTEL Coll.| 4317/4318 | OTLP gRPC/HTTP |",
+        "mode": "markdown"
+      },
+      "title": "Ports reference",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 205,
+      "panels": [],
+      "title": "Request flow (metrics)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 15 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[5m])) by (method, path)",
+          "legendFormat": "{{method}} {{path}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Request rate by method & path",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 15 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[5m])) by (status)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Request rate by status code",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 21 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path))",
+          "legendFormat": "p50 {{path}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path))",
+          "legendFormat": "p95 {{path}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Latency (p50 / p95) by path",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 21 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto" },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Error rate (5xx)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "id": 206,
+      "panels": [],
+      "title": "Log flow (Loki)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 28 },
+      "id": 5,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum by (service) (rate({project=\"rm\"}[5m]))",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Log volume by service (lines/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 28 },
+      "id": 6,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(rate({service=\"backend\"}[5m]))",
+          "legendFormat": "backend logs/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend log rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 34 },
+      "id": 7,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service=\"backend\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend log stream (Promtail → Loki)",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
+      "id": 207,
+      "panels": [],
+      "title": "Trace flow (Tempo)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 42 },
+      "id": 208,
+      "options": {
+        "content": "**Trace flow**\n\nBackend (OpenTelemetry) → OTLP HTTP (:4318) → OTEL Collector → Tempo (:4317).\n\nUse the panel on the right to search traces, or open **Explore → Tempo** for TraceQL and service graph.",
+        "mode": "markdown"
+      },
+      "title": "Trace pipeline",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 42 },
+      "id": 8,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate({__name__=~\"roadmap_.*_count\"}[5m])) or vector(0)",
+          "legendFormat": "OTEL metrics (if exported)",
+          "refId": "A"
+        }
+      ],
+      "title": "OTEL-derived metrics (roadmap_*)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 46 },
+      "id": 9,
+      "options": { "deduplication": true, "showSpanFilterSection": true },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceqlSearch",
+          "refId": "A"
+        }
+      ],
+      "title": "Traces (Backend → OTEL Collector → Tempo)",
+      "type": "traces"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 54 },
+      "id": 209,
+      "panels": [],
+      "title": "Pipeline health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": "Down" }, "type": "value" },
+            { "options": { "1": "Up" }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 55 },
+      "id": 10,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        { "expr": "up{job=\"roadmap-backend\"}", "legendFormat": "Backend", "refId": "A" }
+      ],
+      "title": "Backend (scrape target)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": "Down" }, "type": "value" },
+            { "options": { "1": "Up" }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 55 },
+      "id": 11,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        { "expr": "up{job=\"otel-collector\"}", "legendFormat": "OTEL Collector", "refId": "A" }
+      ],
+      "title": "OTEL Collector (scrape target)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 4, "w": 16, "x": 8, "y": 55 },
+      "id": 12,
+      "options": {
+        "content": "**Data flow summary**\n\n• **Request flow:** Frontend → Backend → PostgreSQL (products, users, audit_logs, activity_logs).\n• **Log flow:** Backend stdout → Docker → Promtail → Loki.\n• **Trace flow:** Backend OTLP → OTEL Collector → Tempo.\n• **Metrics flow:** Prometheus scrapes Backend and OTEL Collector; Grafana queries Prometheus, Loki, Tempo.",
+        "mode": "markdown"
+      },
+      "title": "Summary",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 },
+      "id": 210,
+      "panels": [],
+      "title": "Login & logout data",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 60 },
+      "id": 13,
+      "options": {
+        "content": "**Login & logout flow**\n\n• **API:** `POST /auth/login`, `POST /api/auth/logout`.\n• **PostgreSQL:** Each login (success), login_failed, and logout is stored in **activity_logs** (action: `login`, `login_failed`, `logout`).\n• **Backend logs (Loki):** Backend logs \"login failed\" on auth errors; activity handler records logout. Shown in panels on the right.",
+        "mode": "markdown"
+      },
+      "title": "Login / logout flow",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 18, "x": 6, "y": 60 },
+      "id": 14,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(rate({service=\"backend\"} |~ \"login\"[5m]))",
+          "legendFormat": "login (log lines/s)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(rate({service=\"backend\"} |~ \"logout\"[5m]))",
+          "legendFormat": "logout (log lines/s)",
+          "refId": "B"
+        }
+      ],
+      "title": "Login & logout log rate (backend → Loki)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 66 },
+      "id": 15,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service=\"backend\"} |~ \"login|logout\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend log stream (login & logout)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["roadmap", "data-flow"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "Prometheus", "value": "prometheus" },
+        "hide": 0,
+        "includeAll": false,
+        "name": "prometheus_ds",
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": { "selected": true, "text": "Loki", "value": "loki" },
+        "hide": 0,
+        "includeAll": false,
+        "name": "loki_ds",
+        "query": "loki",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": { "selected": true, "text": "Tempo", "value": "tempo" },
+        "hide": 0,
+        "includeAll": false,
+        "name": "tempo_ds",
+        "query": "tempo",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Data flow",
+  "uid": "data-flow",
+  "version": 1,
+  "weekStart": ""
+}

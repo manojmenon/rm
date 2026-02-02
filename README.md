@@ -9,7 +9,22 @@ Enterprise product roadmap management with multi-product support, milestones, de
 - **Backend:** Go 1.22+, Gin, GORM, PostgreSQL (JSONB), JWT, RBAC, zap (structured logs), OpenTelemetry, rate limiting, pagination
 - **Frontend:** Next.js 14, TypeScript, Tailwind, React Query, Zustand, OpenTelemetry API (`useTrace`)
 - **Database:** PostgreSQL with soft deletes, indexes on dates, foreign keys, `audit_logs` and `activity_logs` tables
-- **Observability:** OTLP tracing (→ Tempo), Prometheus metrics, Loki (logs via Promtail), Grafana (Prometheus, Loki, Tempo datasources; import `grafana-dashboard.json` or `grafana/technical-stack-dashboard.json`)
+- **Observability:** OTLP tracing (→ Tempo), Prometheus metrics, Loki (logs via Promtail), Grafana (Prometheus, Loki, Tempo datasources; dashboards in `scaffold/config/grafana/dashboards/`)
+
+## Project structure
+
+| Area | Location | Description |
+|------|----------|-------------|
+| **Backend** | `app/backend/` (`cmd/server/`, `internal/`, `scripts/seed/`, `go.mod`) | Go API (Gin, GORM, JWT, zap, OTEL) |
+| **Frontend** | `app/frontend/` | Next.js 14 app (TypeScript, Tailwind, React Query) |
+| **Database** | Postgres (Docker or external) | Schema via GORM AutoMigrate; seed in `app/backend/scripts/seed/` |
+| **Config** | [config/](config/) | Env examples and all config files (metrics, logs, traces, Grafana) |
+| **Deployment** | [deploy/](deploy/) | Docker Compose, Docker (single-service), VM options |
+| **Tests** | [tests/](tests/) | Backend unit tests, frontend lint, integration/smoke |
+
+- **Config:** `config/env/` has per-service `.env.example` files; `config/metrics/`, `config/logs/`, `config/traces/`, `config/grafana/` hold Prometheus, Loki, Tempo, OTEL Collector, and Grafana configs. Docker Compose mounts from `config/`.
+- **Deployment:** See [deploy/README.md](deploy/README.md) for Docker Compose (full stack), Docker (single-service), and VM (bare metal) options.
+- **Testing:** See [tests/README.md](tests/README.md) for backend unit tests, frontend lint, and integration/smoke; [How to test](#how-to-test) below.
 
 ## Quick Start
 
@@ -23,8 +38,8 @@ Enterprise product roadmap management with multi-product support, milestones, de
 ### 1. Database
 
 ```bash
-# Using Docker
-docker compose up -d postgres
+# Using Docker (from repo root: make docker-up-postgres)
+docker compose -f scaffold/deploy/docker-compose/docker-compose.yml --project-directory . up -d postgres
 
 # Or run migrations (if using golang-migrate)
 make migrate-up
@@ -38,12 +53,11 @@ Backend uses GORM AutoMigrate by default, so tables (including `audit_logs`, `ac
 
 ```bash
 # Start only Postgres (Docker); then run backend locally
-docker compose up -d postgres
+make docker-up-postgres
 # wait for Postgres to be ready (a few seconds), then:
 make seed
-go mod download
-go run ./cmd/server
-# or: make run-backend-dev
+cd app/backend && go mod download
+make run-backend-dev
 ```
 
 If Postgres is already running elsewhere, set env and run:
@@ -58,7 +72,7 @@ API: `http://localhost:8080`
 ### 3. Frontend
 
 ```bash
-cd frontend
+cd app/frontend
 npm install
 npm run dev
 ```
@@ -84,13 +98,11 @@ make docker-up
 - Loki: http://localhost:3100 (logs; ingested by Promtail from container stdout)  
 - Tempo: http://localhost:3200 (traces; backend sends OTLP to otel-collector → Tempo)  
 - Prometheus: http://localhost:9090  
-- Grafana: http://localhost:3001 (admin / admin). Datasources: Prometheus, Loki, Tempo (provisioned). Import dashboards via **Dashboards → Import**: `grafana-dashboard.json` (metrics), `grafana/technical-stack-dashboard.json` (stack overview, health, logs, traces), or `grafana/data-flow-dashboard.json` (data flow: request/log/trace pipelines). Use Explore to query logs (Loki) and traces (Tempo).
+- Grafana: http://localhost:3001 (admin / admin). Datasources: Prometheus, Loki, Tempo (provisioned from `scaffold/config/grafana/provisioning/datasources/`). Import dashboards from **scaffold/config/grafana/dashboards/** (Roadmap Service, Technical stack, Data flow). Use Explore to query logs (Loki) and traces (Tempo).
 
-If you started only postgres/backend/frontend and want to add the observability stack (Loki, Promtail, Tempo, otel-collector, Prometheus, Grafana):
+If you started only postgres/backend/frontend and want to add the observability stack:
 
 ```bash
-docker compose up -d otel-collector prometheus grafana
-# or
 make docker-up-observability
 ```
 
@@ -99,10 +111,10 @@ If you run the frontend in Docker and the backend on the host (e.g. `go run ./cm
 
 - **Using a .env file:** The API proxy reads `BACKEND_URL` from `.env`. From the **frontend** directory, copy the example and edit:
   ```bash
-  cd frontend && cp .env.example .env
+  cd app/frontend && cp .env.example .env
   # Edit .env and set BACKEND_URL=http://10.66.50.210:8080 (or your host IP)
   ```
-  When running in Docker, put `BACKEND_URL=http://10.66.50.210:8080` in a `.env` in the **project root** (so docker-compose passes it into the frontend container), or mount `frontend/.env` into the container.
+  When running in Docker, put `BACKEND_URL=http://10.66.50.210:8080` in a `.env` in the **project root** (so docker-compose passes it into the frontend container), or mount `app/frontend/.env` into the container.
 - **Or set when starting:**
   ```bash
   BACKEND_URL=http://10.66.50.210:8080 docker compose up -d frontend
@@ -145,14 +157,14 @@ If you still see 500s or backend exits with “db connect failed”:
 
 **Login returns 500 when running backend + frontend locally (Postgres in Docker):**
 
-1. **Backend must be running:** In a terminal run `make run-backend-dev` (or `go run ./cmd/server`). If the backend is not listening on port 8080, the frontend proxy will fail and you may see 500.
+1. **Backend must be running:** In a terminal run `make run-backend-dev`. If the backend is not listening on port 8080, the frontend proxy will fail and you may see 500.
 2. **Seed users:** Run `make seed` so the DB has superadmin/admin/owner users. (Without seed you get 401 "invalid credentials", not 500.)
 3. **See the real error:** Backend logs the cause: check the terminal where the Go server is running. In the browser: DevTools → Network → select the failed login request → **Response** tab; the body is usually `{"error":"..."}` with the backend error (e.g. DB connection, JWT, or table missing).
-4. **Frontend proxy target:** Do not set `BACKEND_URL` in `frontend/.env` or `frontend/.env.local` to `http://backend:8080` when running the frontend on your host; that hostname only resolves inside Docker. Use unset (defaults to `http://localhost:8080`) or `BACKEND_URL=http://localhost:8080`.
+4. **Frontend proxy target:** Do not set `BACKEND_URL` in `app/frontend/.env` or `app/frontend/.env.local` to `http://backend:8080` when running the frontend on your host; that hostname only resolves inside Docker. Use unset (defaults to `http://localhost:8080`) or `BACKEND_URL=http://localhost:8080`.
 
 ## Testing the service
 
-After `docker compose up -d` (or when running backend/frontend locally), verify everything is up:
+After `make docker-up` (or when running backend/frontend locally), verify everything is up:
 
 1. **Backend + DB:**  
    `curl http://localhost:8080/api/health`  
@@ -194,6 +206,24 @@ The backend logs one line: `loki_test: backend log line for Loki verification`. 
 
 You should see the `loki_test` log line (and other backend logs). If you see no logs, confirm Promtail and Loki are running (`docker compose ps`) and that the backend container is running and was started with the rest of the stack (so Promtail can discover it).
 
+## How to test
+
+Run each module’s tests from the **repo root**. See [scaffold/tests/README.md](scaffold/tests/README.md) for details.
+
+| What | Command | Notes |
+|------|---------|-------|
+| **Backend (unit)** | `make test-backend` or `cd app/backend && go test ./...` | No DB required for unit tests (e.g. `app/backend/internal/logger`). |
+| **Frontend (lint)** | `make test-frontend` or `cd app/frontend && npm run lint` | ESLint. |
+| **All module tests** | `make test` | Runs backend + frontend tests. |
+| **Integration / smoke** | `make smoke-test` | Backend and frontend must be running (e.g. `make docker-up` first). Checks `/api/health` and frontend root. |
+
+**Quick flow:**
+
+1. **Backend only:** `make test-backend`
+2. **Frontend only:** `make test-frontend`
+3. **Full stack then smoke:** `make docker-up` then `make smoke-test`
+4. **Local dev then smoke:** Terminal 1: `make run-backend-dev`; Terminal 2: `make run-frontend`; then `make smoke-test`
+
 ## Makefile
 
 - `make run-backend-dev` – run Go server (DB must be up)
@@ -202,8 +232,10 @@ You should see the `loki_test` log line (and other backend logs). If you see no 
 - `make docker-up` / `make docker-down` – start/stop all containers (including Prometheus and Grafana)
 - `make docker-up-postgres` – start only Postgres (use when running backend/frontend locally; backend expects `localhost:5432`)
 - `make docker-up-observability` – start only Loki, Promtail, Tempo, otel-collector, Prometheus, and Grafana (when core stack is already running)
-- `make test` / `make test-backend` / `make test-frontend` – run tests and lint
-- `make smoke-test` – quick check that backend health and frontend respond (see [Testing the service](#testing-the-service))
+- `make test` – run backend unit tests and frontend lint
+- `make test-backend` – Go unit tests (`cd app/backend && go test ./...`)
+- `make test-frontend` – frontend lint (`npm run lint` in app/frontend)
+- `make test-integration` / `make smoke-test` – integration/smoke (backend + frontend must be running; see [How to test](#how-to-test))
 - `make migrate-up` / `make migrate-down` – SQL migrations
 - `make seed` – seed superadmin, admin, and owner users (optional). From host: connects to localhost:5432 (use when Postgres is in Docker with port 5432 exposed). Superadmin: `superadmin@example.com` / `admin123`; Admin: `admin@example.com` / `admin123`; Owner: `owner@example.com` / `admin123`.
 - `make seed-docker` – run the seed container against Docker Postgres (`docker compose run --rm seed`). Use when Postgres is running in Docker and you want to seed from inside the stack.
@@ -280,36 +312,25 @@ You should see the `loki_test` log line (and other backend logs). If you see no 
 
 Protected routes use `Authorization: Bearer <access_token>`.
 
-## Project Structure
+## Project Structure (detailed)
 
 ```
 .
-├── cmd/server/              # Go entrypoint
-├── internal/
-│   ├── config/              # App config
-│   ├── models/              # GORM models (Product, User, Milestone, AuditLog, ActivityLog, Group, Org, etc.)
-│   ├── repositories/        # Data access
-│   ├── services/            # Business logic (Audit, Activity, Auth, Product, Milestone, etc.)
-│   ├── handlers/            # HTTP handlers
-│   ├── middleware/          # RequestID, Telemetry, Auth, RBAC, AuditContext, RateLimit, CORS
-│   ├── auth/                # JWT
-│   ├── dto/                 # Request/response DTOs, pagination, AuditMeta
-│   ├── telemetry/           # OpenTelemetry tracer provider
-│   └── migrations/          # SQL migrations (init, audit_logs, product_versions, notifications, org, activity_logs, etc.)
-├── frontend/
-│   └── src/
-│       ├── app/             # Next.js App Router (dashboard, products, roadmap, groups, login, register, admin, activity-logs, audit-logs, notifications, requests)
-│       ├── components/     # Nav, RequireAuth, RequireRole, RoadmapView (Gantt), GlobalSearch, etc.
-│       ├── hooks/           # useTrace (OTEL)
-│       ├── lib/             # API client, dateRangePresets, requestUtils, roles
-│       └── store/           # Zustand auth store
-├── scripts/seed/            # Seed superadmin, admin, owner users
-├── docker-compose.yml       # postgres, backend, frontend, otel-collector, prometheus, grafana
-├── otel-collector.yaml      # OTLP receiver, batch, prometheus/logging exporters
-├── prometheus.yml           # Scrape configs
-├── grafana-dashboard.json                  # Import into Grafana (metrics)
-├── grafana/technical-stack-dashboard.json  # Technical stack (overview, health, Loki, Tempo, links)
-├── grafana/data-flow-dashboard.json       # Data flow (request/log/trace flow, pipeline health)
+├── app/                      # Application (backend, frontend, database-related)
+│   ├── backend/              # Go module (go.mod, go.sum)
+│   │   ├── cmd/server/       # Backend entrypoint
+│   │   ├── internal/         # config, models, repositories, services, handlers, middleware, auth, dto, telemetry, logger, migrations
+│   │   └── scripts/seed/     # Seed superadmin, admin, owner users
+│   └── frontend/             # Frontend (Next.js): src/app, components, hooks, lib, store; includes Dockerfile for standalone build
+├── scaffold/                 # Config, deploy, tests, init, Grafana (non-app)
+│   ├── config/               # Env examples, metrics, logs, traces, Grafana
+│   ├── deploy/               # Docker Compose, Docker (single-service), VM, k8s (Kind)
+│   │   └── k8s/              # Kubernetes (Kind): kind/ubuntu, kind/macos
+│   ├── tests/                # Backend unit tests layout, frontend lint, integration/smoke
+│   ├── init/                 # Initialization / bootstrap assets
+│   │   └── prompts/          # AI/prompt assets
+│   └── grafana/              # Additional Grafana dashboards
+├── infra/                    # Future Ansible: Docker, Docker Compose, VM provisioning
 ├── Makefile
 └── README.md
 ```
@@ -333,7 +354,7 @@ Protected routes use `Authorization: Bearer <access_token>`.
 
 ## Seed Data
 
-**Docker Compose:** The seed runs automatically when you start the stack. The `seed` service runs once after Postgres is healthy (with `DB_HOST=postgres`, etc.), then the backend starts. So `docker compose up -d` will seed the containerized Postgres and then start the backend.
+**Docker Compose:** The seed runs automatically when you start the stack. The `seed` service runs once after Postgres is healthy (with `DB_HOST=postgres`, etc.), then the backend starts. So `make docker-up` will seed the containerized Postgres and then start the backend.
 
 **Manual seed (from host):**
 
@@ -341,7 +362,7 @@ Protected routes use `Authorization: Bearer <access_token>`.
 # Postgres in Docker with port 5432 exposed (default)
 make seed
 # or
-go run ./scripts/seed/main.go
+cd app/backend && go run ./scripts/seed/main.go
 ```
 
 **Manual seed (inside Docker):**

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: roadmap
+  labels:
+    app: frontend
+    app.kubernetes.io/name: roadmap
+spec:
+  type: NodePort
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30080
+      name: http
+  selector:
+    app: frontend

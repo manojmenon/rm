@@ -1,0 +1,53 @@
+# Loki config (aligned with scaffold/config/logs/loki-config.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: roadmap
+  labels:
+    app: loki
+    app.kubernetes.io/name: roadmap
+data:
+  loki-config.yaml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+      log_level: info
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+    query_range:
+      results_cache:
+        cache:
+          embedded_cache:
+            enabled: true
+            max_size_mb: 100
+    schema_config:
+      configs:
+        - from: "2020-10-24"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    storage_config:
+      filesystem:
+        directory: /loki/chunks
+    compactor:
+      working_directory: /loki/compactor
+      compaction_interval: 10s
+      retention_enabled: true
+      retention_delete_delay: 2h
+      retention_delete_worker_count: 150
+    analytics:
+      reporting_enabled: false
