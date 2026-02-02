@@ -1,0 +1,136 @@
+#################################################
+# Node.js / TypeScript
+#################################################
+
+node_modules/
+dist/
+build/
+out/
+.next/
+.nuxt/
+coverage/
+storybook-static/
+*.tsbuildinfo
+.nyc_output/
+.cache/
+.tmp/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# Environment (never commit secrets)
+.env
+.env.*
+!.env.example
+
+#################################################
+# Keep ONE lock file for reproducible builds
+#################################################
+
+# keep lock files (recommended for apps)
+!package-lock.json
+!yarn.lock
+!pnpm-lock.yaml
+
+#################################################
+# Go
+#################################################
+
+# binaries
+bin/
+build/
+dist/
+
+# compiled
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# test binaries
+*.test
+
+# coverage
+coverage.out
+*.cover
+coverage/
+
+# go workspace
+go.work
+go.work.sum
+
+# vendor (optional – ignore unless you vendor deps)
+vendor/
+
+#################################################
+# Docker
+#################################################
+
+docker-data/
+*.local
+*.tar
+*.gz
+
+#################################################
+# Database / Local runtime
+#################################################
+
+*.db
+*.sqlite
+*.sqlite3
+*.pid
+*.seed
+
+#################################################
+# Observability / telemetry
+#################################################
+
+otel-data/
+prometheus-data/
+grafana-data/
+tempo-data/
+loki-data/
+
+#################################################
+# IDE / Editor
+#################################################
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+#################################################
+# OS junk
+#################################################
+
+.DS_Store
+Thumbs.db
+
+#################################################
+# Testing / Temp
+#################################################
+
+tmp/
+temp/
+*.bak
+*.orig
+
+#################################################
+# Terraform / infra (if you add later)
+#################################################
+
+.terraform/
+*.tfstate
+*.tfstate.*
+
+#################################################
+# Misc
+#################################################
+
+*.tgz
+*.zip
