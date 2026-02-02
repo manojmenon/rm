@@ -7,15 +7,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/rm/roadmap/internal/dto"
 	"github.com/rm/roadmap/internal/services"
+	"go.uber.org/zap"
 )
 
 type AuthHandler struct {
 	authService     *services.AuthService
 	activityService *services.ActivityService
+	log             *zap.Logger
 }
 
-func NewAuthHandler(authService *services.AuthService, activityService *services.ActivityService) *AuthHandler {
-	return &AuthHandler{authService: authService, activityService: activityService}
+func NewAuthHandler(authService *services.AuthService, activityService *services.ActivityService, log *zap.Logger) *AuthHandler {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	return &AuthHandler{authService: authService, activityService: activityService, log: log}
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -42,6 +47,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 			return
 		}
+		h.log.Error("login failed", zap.String("email", req.Email), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -71,6 +77,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
 			return
 		}
+		h.log.Error("register failed", zap.String("email", req.Email), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

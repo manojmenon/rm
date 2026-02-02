@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,9 +61,13 @@ func (s *ActivityService) Log(ctx context.Context, entry ActivityEntry) {
 	}()
 }
 
-// List returns paginated activity logs. Admin only in handler.
-func (s *ActivityService) List(ctx context.Context, limit, offset int, action string, dateFrom, dateTo *time.Time, sortBy, order string) ([]dto.ActivityLogResponse, int64, error) {
-	list, total, err := s.repo.List(ctx, limit, offset, action, dateFrom, dateTo, sortBy, order)
+// List returns paginated activity logs. For admin: all logs. For non-admin: only the caller's logs (handler should require date range for non-admin).
+func (s *ActivityService) List(ctx context.Context, limit, offset int, action string, dateFrom, dateTo *time.Time, sortBy, order string, callerID uuid.UUID, callerRole string) ([]dto.ActivityLogResponse, int64, error) {
+	var userID *uuid.UUID
+	if !models.Role(strings.ToLower(callerRole)).IsAdminOrAbove() {
+		userID = &callerID
+	}
+	list, total, err := s.repo.List(ctx, limit, offset, action, dateFrom, dateTo, sortBy, order, userID)
 	if err != nil {
 		return nil, 0, err
 	}

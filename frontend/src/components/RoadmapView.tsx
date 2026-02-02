@@ -366,7 +366,7 @@ export function ProductGanttChart({
                         e.preventDefault();
                         e.stopPropagation();
                         const serials = new Set(section.dependencySerialNumbers);
-                        const same = highlightedSerials && serials.size === highlightedSerials.size && [...serials].every((n) => highlightedSerials.has(n));
+                        const same = highlightedSerials && serials.size === highlightedSerials.size && Array.from(serials).every((n) => highlightedSerials.has(n));
                         if (superscriptPinned && same) {
                           setHighlightedSerials(null);
                           setSuperscriptPinned(false);
@@ -646,12 +646,17 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
     return () => clearTimeout(t);
   }, [showUnifiedGantt, versionEntriesLength]);
 
+  const isAdmin = (user?.role ?? '').toLowerCase() === 'admin' || (user?.role ?? '').toLowerCase() === 'superadmin';
   const versionDepsQueries = useQueries({
-    queries: versionEntries.map((ve, index) => ({
-      queryKey: ['version-dependencies', ve.versionId],
-      queryFn: () => api.productVersionDependencies.listByProductVersion(ve.versionId),
-      enabled: !!ve.versionId && showUnifiedGantt && index < versionDepsRevealCount,
-    })),
+    queries: versionEntries.map((ve, index) => {
+      const product = products.find((p) => p.id === ve.productId);
+      const canAccessDeps = isAdmin || product?.owner_id === user?.id;
+      return {
+        queryKey: ['version-dependencies', ve.versionId],
+        queryFn: () => api.productVersionDependencies.listByProductVersion(ve.versionId),
+        enabled: canAccessDeps && !!ve.versionId && showUnifiedGantt && index < versionDepsRevealCount,
+      };
+    }),
   });
 
   const versionDepsData = versionDepsQueries.map((q) => q.data);
@@ -758,14 +763,14 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
     unifiedSectionsToPass = unifiedSections.map((s) => {
       const blueKeys = blueDeps.get(s.key) ?? [];
       const redKeys = redDeps.get(s.key) ?? [];
-      const depSerials = [
-        ...new Set(
+      const depSerials = Array.from(
+        new Set(
           [
             ...blueKeys.map((k) => serialByKey.get(k)),
             ...redKeys.map((k) => serialByKey.get(k)),
           ].filter((n): n is number => n != null)
-        ),
-      ].sort((a, b) => a - b);
+        )
+      ).sort((a, b) => a - b);
       return {
         ...s,
         dependencySerialNumbers: depSerials.length > 0 ? depSerials : undefined,

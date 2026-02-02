@@ -13,10 +13,9 @@ import (
 )
 
 var (
-	ErrProductNotFound                          = errors.New("product not found")
-	ErrForbidden                                = errors.New("forbidden")
-	ErrInvalidOwnerID                           = errors.New("invalid owner_id")
-	ErrProductActiveRequiresPricingCommitteeApproval = errors.New("product cannot be set to active until it has a Pricing Committee Approval milestone")
+	ErrProductNotFound   = errors.New("product not found")
+	ErrForbidden         = errors.New("forbidden")
+	ErrInvalidOwnerID    = errors.New("invalid owner_id")
 )
 
 type ProductService struct {
@@ -156,26 +155,6 @@ func (s *ProductService) Update(ctx context.Context, id uuid.UUID, req dto.Produ
 	}
 	if callerRole == models.RoleOwner && req.LifecycleStatus != nil {
 		return nil, ErrForbidden
-	}
-	// Business rule: product cannot be available (active) until it has a Pricing Committee Approval milestone,
-	// except when approving a pending product (status pending -> approved); that approval does not require the milestone.
-	settingLifecycleToActive := req.LifecycleStatus != nil && strings.EqualFold(strings.TrimSpace(*req.LifecycleStatus), string(models.LifecycleActive))
-	isProductApproval := p.Status == models.StatusPending && req.Status != nil && strings.EqualFold(strings.TrimSpace(*req.Status), string(models.StatusApproved))
-	if settingLifecycleToActive && !isProductApproval {
-		milestones, err := s.milestoneRepo.ListByProductID(id)
-		if err != nil {
-			return nil, err
-		}
-		hasPricingCommittee := false
-		for i := range milestones {
-			if strings.EqualFold(strings.TrimSpace(milestones[i].Label), "Pricing Committee Approval") {
-				hasPricingCommittee = true
-				break
-			}
-		}
-		if !hasPricingCommittee {
-			return nil, ErrProductActiveRequiresPricingCommitteeApproval
-		}
 	}
 	oldResp := productToResponse(p)
 	if err := applyProductUpdate(p, req); err != nil {
@@ -324,12 +303,17 @@ func applyProductUpdate(p *models.Product, req dto.ProductUpdateRequest) error {
 	}
 	if req.ClearOwner != nil && *req.ClearOwner {
 		p.OwnerID = nil
-	} else if req.OwnerID != nil && *req.OwnerID != "" {
-		parsed, err := uuid.Parse(*req.OwnerID)
-		if err != nil {
-			return ErrInvalidOwnerID
+	} else if req.OwnerID != nil {
+		s := strings.TrimSpace(*req.OwnerID)
+		if s == "" || strings.EqualFold(s, "none") {
+			p.OwnerID = nil
+		} else {
+			parsed, err := uuid.Parse(s)
+			if err != nil {
+				return ErrInvalidOwnerID
+			}
+			p.OwnerID = &parsed
 		}
-		p.OwnerID = &parsed
 	}
 	if req.Metadata != nil {
 		p.Metadata = models.JSONB(req.Metadata)

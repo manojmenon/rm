@@ -94,7 +94,7 @@ function ProductSelector({
     } else {
       const added = new Set(pendingIds);
       filteredProducts.forEach((p) => added.add(p.id));
-      setPendingIds([...added]);
+      setPendingIds(Array.from(added));
     }
   };
 

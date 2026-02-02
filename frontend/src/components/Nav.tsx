@@ -196,15 +196,15 @@ export function Nav() {
                   aria-label="User menu"
                 >
                   <div className="p-2 bg-dhl-yellow/10">
+                    {dropdownLink('/audit-logs', 'Audit logs')}
+                    {dropdownLink('/activity-logs', 'Activity Logs')}
+                    {dropdownLink('/notifications', 'Notifications', unreadCount)}
                     {(user.role === 'admin' || user.role === 'superadmin') && (
                       <>
+                        <div className="border-t border-dhl-red/30 my-2" aria-hidden />
                         {dropdownLink('/groups', 'Groups')}
                         {dropdownLink('/requests', 'Requests queue', pendingRequestCount)}
-                        {dropdownLink('/audit-logs', 'Audit logs')}
-                        {dropdownLink('/activity-logs', 'Activity Logs')}
-                        {dropdownLink('/notifications', 'Notifications', unreadCount)}
                         {dropdownLink('/admin/users', 'Users')}
-                        <div className="border-t border-dhl-red/30 my-2" aria-hidden />
                       </>
                     )}
                     <button
@@ -278,14 +278,14 @@ export function Nav() {
                 {link('/roadmap', 'Roadmap')}
                 {link('/products', 'Products', pendingRequestCount)}
                 {link('/dashboard', 'Stats')}
+                {link('/audit-logs', 'Audit logs')}
+                {link('/activity-logs', 'Activity Logs')}
+                {link('/notifications', 'Notifications', unreadCount)}
                 {(user.role === 'admin' || user.role === 'superadmin') && (
                   <>
                     <div className="border-t border-dhl-red/30 mt-2 pt-2" aria-hidden />
                     {link('/groups', 'Groups')}
                     {link('/requests', 'Requests queue', pendingRequestCount)}
-                    {link('/audit-logs', 'Audit logs')}
-                    {link('/activity-logs', 'Activity Logs')}
-                    {link('/notifications', 'Notifications', unreadCount)}
                     {link('/admin/users', 'Users')}
                   </>
                 )}

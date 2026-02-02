@@ -57,7 +57,6 @@ function ProductDetailContent() {
   const [addingDepVersionId, setAddingDepVersionId] = useState<string | null>(null);
   const [newDepTargetProductId, setNewDepTargetProductId] = useState('');
   const [newDepTargetVersionId, setNewDepTargetVersionId] = useState('');
-  const [newDepRequiredStatus, setNewDepRequiredStatus] = useState('');
   const [category1, setCategory1] = useState('');
   const [category2, setCategory2] = useState('');
   const [category3, setCategory3] = useState('');
@@ -128,11 +127,12 @@ function ProductDetailContent() {
     return () => clearTimeout(t);
   }, [versionsLength]);
 
+  const canAccessVersionDeps = isAdmin || product?.owner_id === user?.id;
   const versionDepsQueries = useQueries({
     queries: (versions ?? []).map((v, index) => ({
       queryKey: ['version-dependencies', v.id],
       queryFn: () => api.productVersionDependencies.listByProductVersion(v.id),
-      enabled: !!v.id && index < versionDepsRevealCount,
+      enabled: canAccessVersionDeps && !!v.id && index < versionDepsRevealCount,
     })),
   });
   const versionDepsByVersionId: Record<string, ProductVersionDependency[]> = {};
@@ -146,7 +146,7 @@ function ProductDetailContent() {
     [versionDepsByVersionId]
   );
   const targetProductIds = useMemo(
-    () => [...new Set(allVersionDeps.map((d) => d.target_product_id))],
+    () => Array.from(new Set(allVersionDeps.map((d) => d.target_product_id))),
     [allVersionDeps]
   );
 
@@ -244,14 +244,13 @@ function ProductDetailContent() {
   });
 
   const addVersionDepMutation = useMutation({
-    mutationFn: (body: { source_product_version_id: string; target_product_id: string; target_product_version_id?: string; required_status: string }) =>
+    mutationFn: (body: { source_product_version_id: string; target_product_id: string; target_product_version_id?: string; required_status?: string }) =>
       api.productVersionDependencies.create(body),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['version-dependencies', variables.source_product_version_id] });
       setAddingDepVersionId(null);
       setNewDepTargetProductId('');
       setNewDepTargetVersionId('');
-      setNewDepRequiredStatus('');
     },
   });
   const deleteVersionDepMutation = useMutation({
@@ -325,6 +324,11 @@ function ProductDetailContent() {
       setConfirmDeleteMilestone(null);
     },
   });
+
+  // Clear stale lifecycle error when product data loads/updates (e.g. after backend fix or refetch)
+  useEffect(() => {
+    if (product?.lifecycle_status != null) updateLifecycleMutation.reset();
+  }, [product?.lifecycle_status]);
 
   if (isLoading || !product) {
     return <p className="text-gray-500">Loading...</p>;
@@ -428,12 +432,18 @@ function ProductDetailContent() {
                     onChange={(e) => updateLifecycleMutation.mutate(e.target.value)}
                     className="input w-auto"
                     title="Lifecycle (Active / Not Active / Suspend / End of roadmap)"
+                    disabled={updateLifecycleMutation.isPending}
                   >
                     <option value="active">Active</option>
                     <option value="not_active">Not Active</option>
                     <option value="suspend">Suspend</option>
                     <option value="end_of_roadmap">End of roadmap</option>
                   </select>
+                  {updateLifecycleMutation.isError && (
+                    <span className="text-sm text-red-600" role="alert">
+                      {updateLifecycleMutation.error?.message ?? 'Update failed'}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-600 shrink-0">Owner</label>
@@ -563,7 +573,7 @@ function ProductDetailContent() {
             if (!byVersion.has(key)) byVersion.set(key, []);
             byVersion.get(key)!.push(m);
           });
-          const sections: Array<{ key: string; title: string; milestones: Milestone[] }> = [];
+          const sections: Array<{ key: string; title: string; milestones: Milestone[]; isDependent?: boolean }> = [];
           if (byVersion.has('product')) {
             sections.push({ key: 'product', title: 'Product-level', milestones: byVersion.get('product')! });
           }
@@ -780,14 +790,15 @@ function ProductDetailContent() {
                   <div className="ml-4 mt-2 pl-2 border-l-2 border-gray-200">
                     <p className="text-xs font-medium text-gray-500 mb-1">Depends on</p>
                     {(versionDepsByVersionId[v.id] ?? []).length === 0 && addingDepVersionId !== v.id && (
-                      <p className="text-sm text-gray-400">No dependencies. This version can depend on another product (and version) having a required status.</p>
+                      <p className="text-sm text-gray-400">No dependencies. This version can depend on another product (and optional version).</p>
                     )}
                     <ul className="space-y-1 mb-2">
                       {(versionDepsByVersionId[v.id] ?? []).map((d) => (
                         <li key={d.id} className="flex items-center gap-2 text-sm">
                           <span className="text-gray-700">
-                            <strong>{d.target_product_name || d.target_product_id}</strong>
-                            {d.target_product_version ? ` (v${d.target_product_version})` : ''} must have status &quot;{d.required_status}&quot;
+                            Depends on <strong>{d.target_product_name || d.target_product_id}</strong>
+                            {d.target_product_version ? ` (v${d.target_product_version})` : ''}
+                            {d.required_status?.trim() ? ` — required status: &quot;${d.required_status.trim()}&quot;` : ''}
                           </span>
                           {canEdit && (
                             <button
@@ -828,13 +839,6 @@ function ProductDetailContent() {
                                 <option key={pv.id} value={pv.id}>{pv.version}</option>
                               ))}
                             </select>
-                            <label className="block font-medium text-gray-700">Required status</label>
-                            <input
-                              value={newDepRequiredStatus}
-                              onChange={(e) => setNewDepRequiredStatus(e.target.value)}
-                              className="input w-full"
-                              placeholder="e.g. Pricing Committee Approval, approved"
-                            />
                             <div className="flex gap-2">
                               <button
                                 type="button"
@@ -842,14 +846,14 @@ function ProductDetailContent() {
                                   source_product_version_id: v.id,
                                   target_product_id: newDepTargetProductId,
                                   target_product_version_id: newDepTargetVersionId || undefined,
-                                  required_status: newDepRequiredStatus.trim(),
+                                  required_status: '',
                                 })}
-                                disabled={!newDepTargetProductId || !newDepRequiredStatus.trim() || addVersionDepMutation.isPending}
+                                disabled={!newDepTargetProductId || addVersionDepMutation.isPending}
                                 className="btn-primary text-sm disabled:opacity-50"
                               >
                                 {addVersionDepMutation.isPending ? 'Adding…' : 'Add'}
                               </button>
-                              <button type="button" onClick={() => { setAddingDepVersionId(null); setNewDepTargetProductId(''); setNewDepTargetVersionId(''); setNewDepRequiredStatus(''); }} className="btn-secondary text-sm">
+                              <button type="button" onClick={() => { setAddingDepVersionId(null); setNewDepTargetProductId(''); setNewDepTargetVersionId(''); }} className="btn-secondary text-sm">
                                 Cancel
                               </button>
                             </div>
@@ -1157,14 +1161,14 @@ function MilestonesList({
                 className="px-4 py-3 bg-white hover:bg-slate-50/50"
                 onMouseEnter={() => canEdit && setHoveredMilestoneId(m.id)}
                 onMouseLeave={() => canEdit && setHoveredMilestoneId(null)}
-                onClick={() => canEdit && !isEditingThis && setHoveredMilestoneId((prev) => (prev === m.id ? prev : m.id))}
+                onClick={() => canEdit && !isEditingThis && setHoveredMilestoneId(m.id)}
               >
                 {isEditingThis ? (
                   <div className="mb-2" onClick={(e) => e.stopPropagation()}>
                     <MilestoneEditor
                       productId={productId}
                       productVersionId={m.product_version_id ?? undefined}
-                      milestone={m}
+                      milestone={m as Milestone}
                       onSuccess={() => {
                         setEditingMilestoneId(null);
                         onMilestoneUpdated();

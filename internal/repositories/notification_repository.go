@@ -91,8 +91,7 @@ func (r *notificationRepository) Archive(id, userID uuid.UUID) error {
 }
 
 func (r *notificationRepository) Delete(id, userID uuid.UUID) error {
-	now := time.Now().UTC()
-	return r.db.Model(&models.Notification{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Update("deleted_at", now).Error
+	// Use GORM's soft delete: Delete() sets deleted_at on the model
+	return r.db.Where("id = ? AND user_id = ? AND deleted_at IS NULL", id, userID).
+		Delete(&models.Notification{}).Error
 }

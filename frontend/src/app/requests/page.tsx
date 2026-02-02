@@ -1,7 +1,7 @@
 'use client';
 
 import { RequireAuth } from '@/components/RequireAuth';
-import { RequestQueueContent } from '@/app/admin/requests/page';
+import { RequestQueueContent } from '@/components/RequestQueueContent';
 
 export default function RequestsPage() {
   return (

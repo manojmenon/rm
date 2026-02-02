@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rm/roadmap/internal/auth"
 	"github.com/rm/roadmap/internal/config"
 	"github.com/rm/roadmap/internal/handlers"
+	"github.com/rm/roadmap/internal/logger"
 	"github.com/rm/roadmap/internal/middleware"
 	"github.com/rm/roadmap/internal/models"
 	"github.com/rm/roadmap/internal/repositories"
@@ -21,22 +24,34 @@ import (
 )
 
 func main() {
-	logger, err := zap.NewProduction()
+	logger, err := logger.New()
 	if err != nil {
 		panic(err)
 	}
 	defer logger.Sync()
 
 	cfg := config.Load()
+	if cfg.JWT.Secret == "" {
+		logger.Fatal("JWT_SECRET must be set (non-empty)")
+	}
 
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
 		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
 	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// Retry DB connect (Docker Compose: postgres may not be ready when backend starts)
+	var db *gorm.DB
+	for i := 0; i < 15; i++ {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err == nil {
+			break
+		}
+		logger.Warn("db connect retry", zap.Error(err), zap.Int("attempt", i+1))
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		logger.Fatal("db connect failed", zap.Error(err))
+		logger.Fatal("db connect failed after retries", zap.Error(err))
 	}
 	if err := db.AutoMigrate(
 		&models.User{},
@@ -110,8 +125,8 @@ func main() {
 		defer func() { _ = tp.Shutdown(ctx) }()
 	}
 
-	authHandler := handlers.NewAuthHandler(authSvc, activitySvc)
-	productHandler := handlers.NewProductHandler(productSvc)
+	authHandler := handlers.NewAuthHandler(authSvc, activitySvc, logger)
+	productHandler := handlers.NewProductHandler(productSvc, logger)
 	milestoneHandler := handlers.NewMilestoneHandler(milestoneSvc)
 	depHandler := handlers.NewDependencyHandler(depSvc)
 	reqHandler := handlers.NewProductRequestHandler(reqSvc)
@@ -126,12 +141,37 @@ func main() {
 	groupHandler := handlers.NewGroupHandler(groupSvc)
 
 	r := gin.New()
+	// When behind Next.js proxy (Docker Compose), trust proxy so ClientIP etc. work from X-Forwarded-*
+	if err := r.SetTrustedProxies(nil); err != nil {
+		logger.Warn("SetTrustedProxies failed", zap.Error(err))
+	}
 	r.Use(middleware.Recovery(logger))
 	r.Use(gin.Logger())
 	r.Use(middleware.CORS())
 	r.Use(middleware.RequestID())
+	r.Use(middleware.Prometheus())
 	r.Use(middleware.Telemetry())
 	r.Use(middleware.RateLimit())
+
+	// Unauthenticated health check (for proxy); pings DB so 503 indicates DB issue.
+	// GET /api/health?loki_test=1 logs a line so you can verify backend logs in Loki (Grafana Explore).
+	r.GET("/api/health", func(c *gin.Context) {
+		if c.Query("loki_test") == "1" {
+			logger.Info("loki_test: backend log line for Loki verification")
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			logger.Error("health: db access failed", zap.Error(err))
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "error": "db", "detail": err.Error()})
+			return
+		}
+		if err := sqlDB.Ping(); err != nil {
+			logger.Error("health: db ping failed", zap.Error(err))
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "error": "db", "detail": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "db": "ok"})
+	})
 
 	r.POST("/auth/login", authHandler.Login)
 	r.POST("/auth/register", authHandler.Register)
@@ -220,7 +260,7 @@ func main() {
 		api.GET("/audit-logs", auditHandler.List)
 		api.POST("/audit-logs/archive", middleware.RequireAdmin(), auditHandler.Archive)
 		api.POST("/audit-logs/archive/delete", middleware.RequireAdmin(), auditHandler.DeleteArchived)
-		api.GET("/activity-logs", middleware.RequireAdmin(), activityHandler.List)
+		api.GET("/activity-logs", activityHandler.List)
 
 		api.GET("/groups", groupHandler.List)
 		api.POST("/groups", groupHandler.Create)
@@ -232,6 +272,9 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	// Prometheus scrape target (no auth); keep path out of middleware to avoid recording /metrics in metrics
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	addr := ":" + cfg.Server.Port
 	logger.Info("server listening", zap.String("addr", addr))

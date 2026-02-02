@@ -14,7 +14,7 @@ type ProductVersionDependency struct {
 	SourceProductVersionID  uuid.UUID       `gorm:"type:uuid;not null;index" json:"source_product_version_id"`
 	TargetProductID         uuid.UUID       `gorm:"type:uuid;not null;index" json:"target_product_id"`
 	TargetProductVersionID  *uuid.UUID      `gorm:"type:uuid;index" json:"target_product_version_id,omitempty"`
-	RequiredStatus          string          `gorm:"type:varchar(200);not null" json:"required_status"`
+	RequiredStatus          string          `gorm:"type:varchar(200);not null;default:''" json:"required_status"`
 	CreatedAt               time.Time       `json:"created_at"`
 	UpdatedAt               time.Time       `json:"updated_at"`
 	DeletedAt               gorm.DeletedAt  `gorm:"index" json:"-"`

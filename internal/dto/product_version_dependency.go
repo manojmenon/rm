@@ -4,7 +4,7 @@ type ProductVersionDependencyCreateRequest struct {
 	SourceProductVersionID  string  `json:"source_product_version_id" binding:"required"`
 	TargetProductID         string  `json:"target_product_id" binding:"required"`
 	TargetProductVersionID  string  `json:"target_product_version_id"` // optional
-	RequiredStatus          string  `json:"required_status" binding:"required"`
+	RequiredStatus          string  `json:"required_status"`            // optional; e.g. milestone label the target must have
 }
 
 type ProductVersionDependencyResponse struct {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/rm/roadmap/internal/config"
 	"github.com/rm/roadmap/internal/models"
@@ -19,47 +20,54 @@ func main() {
 		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
 		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
 	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	var db *gorm.DB
+	var err error
+	for i := 0; i < 15; i++ {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err == nil {
+			break
+		}
+		log.Printf("seed db connect retry %d: %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
 
 	userRepo := repositories.NewUserRepository(db)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
-	superadmin := &models.User{
+
+	seedUser := func(name, email string, u *models.User) {
+		_, err := userRepo.GetByEmail(email)
+		if err == nil {
+			log.Printf("%s already exists: %s", name, email)
+			return
+		}
+		if err := userRepo.Create(u); err != nil {
+			log.Printf("failed to create %s: %v", name, err)
+			return
+		}
+		log.Printf("created %s: %s", name, email)
+	}
+
+	seedUser("superadmin", "superadmin@example.com", &models.User{
 		Name:         "Superadmin",
 		Email:        "superadmin@example.com",
 		PasswordHash: string(hash),
 		Role:         models.RoleSuperadmin,
-	}
-	if err := userRepo.Create(superadmin); err != nil {
-		log.Printf("superadmin user may already exist: %v", err)
-	} else {
-		log.Printf("created superadmin: %s", superadmin.Email)
-	}
-	admin := &models.User{
+	})
+	seedUser("admin", "admin@example.com", &models.User{
 		Name:         "Admin",
 		Email:        "admin@example.com",
 		PasswordHash: string(hash),
 		Role:         models.RoleAdmin,
-	}
-	if err := userRepo.Create(admin); err != nil {
-		log.Printf("admin user may already exist: %v", err)
-	} else {
-		log.Printf("created admin: %s", admin.Email)
-	}
-
-	owner := &models.User{
+	})
+	seedUser("owner", "owner@example.com", &models.User{
 		Name:         "Product Owner",
 		Email:        "owner@example.com",
 		PasswordHash: string(hash),
 		Role:         models.RoleOwner,
-	}
-	if err := userRepo.Create(owner); err != nil {
-		log.Printf("owner user may already exist: %v", err)
-	} else {
-		log.Printf("created owner: %s", owner.Email)
-	}
+	})
 
 	log.Println("seed done")
 }

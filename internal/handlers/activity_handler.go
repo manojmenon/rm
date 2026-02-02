@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rm/roadmap/internal/dto"
 	"github.com/rm/roadmap/internal/middleware"
+	"github.com/rm/roadmap/internal/models"
 	"github.com/rm/roadmap/internal/services"
 )
 
@@ -20,7 +21,24 @@ func NewActivityHandler(activityService *services.ActivityService) *ActivityHand
 	return &ActivityHandler{activityService: activityService}
 }
 
+func (h *ActivityHandler) getCaller(c *gin.Context) (uuid.UUID, string) {
+	userID, _ := c.Get(middleware.UserIDKey)
+	role, _ := c.Get(middleware.UserRoleKey)
+	roleStr := "owner"
+	if r, ok := role.(string); ok && r != "" {
+		roleStr = r
+	}
+	var id uuid.UUID
+	if userID != nil {
+		if s, ok := userID.(string); ok {
+			id, _ = uuid.Parse(s)
+		}
+	}
+	return id, roleStr
+}
+
 func (h *ActivityHandler) List(c *gin.Context) {
+	callerID, callerRole := h.getCaller(c)
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	if limit < 1 || limit > 100 {
@@ -47,8 +65,15 @@ func (h *ActivityHandler) List(c *gin.Context) {
 			dateTo = &t
 		}
 	}
+	// Non-admin users must provide a date range (restrict to their activity within dates).
+	if !models.Role(callerRole).IsAdminOrAbove() {
+		if dateFrom == nil || dateTo == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "date_from and date_to are required for user activity"})
+			return
+		}
+	}
 
-	list, total, err := h.activityService.List(c.Request.Context(), limit, offset, action, dateFrom, dateTo, sortBy, order)
+	list, total, err := h.activityService.List(c.Request.Context(), limit, offset, action, dateFrom, dateTo, sortBy, order, callerID, callerRole)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

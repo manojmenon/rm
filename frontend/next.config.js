@@ -2,13 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
-  async rewrites() {
-    const backend = process.env.BACKEND_URL || 'http://localhost:8080';
-    return [
-      { source: '/api/auth/:path*', destination: `${backend}/auth/:path*` },
-      { source: '/api/:path*', destination: `${backend}/api/:path*` },
-    ];
-  },
+  // API proxy is in app/api/[[...path]]/route.ts so BACKEND_URL is read at runtime (required when frontend runs in Docker and backend URL varies).
 };
 
 module.exports = nextConfig;

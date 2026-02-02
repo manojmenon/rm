@@ -177,7 +177,7 @@ function ProductsContent() {
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
     queryFn: () => api.users.list(),
-    enabled: true,
+    enabled: isAdmin,
     staleTime: 0,
   });
   const { data: deletionRequests = [] } = useQuery({
@@ -235,12 +235,16 @@ function ProductsContent() {
     return () => clearTimeout(t);
   }, [versionEntries.length]);
   const depQueries = useQueries({
-    queries: versionEntries.map((ve, index) => ({
-      queryKey: ['product-version-deps', ve.versionId],
-      queryFn: () => api.productVersionDependencies.listByProductVersion(ve.versionId),
-      enabled: !!ve.versionId && index < depQueriesRevealCount,
-      staleTime: 60 * 1000,
-    })),
+    queries: versionEntries.map((ve, index) => {
+      const product = productsRaw.find((p) => p.id === ve.productId);
+      const canAccessDeps = isAdmin || product?.owner_id === user?.id;
+      return {
+        queryKey: ['product-version-deps', ve.versionId],
+        queryFn: () => api.productVersionDependencies.listByProductVersion(ve.versionId),
+        enabled: canAccessDeps && !!ve.versionId && index < depQueriesRevealCount,
+        staleTime: 60 * 1000,
+      };
+    }),
   });
   const productIdToSerial = useMemo(
     () => new Map(productIds.map((id, i) => [id, i + 1])),
@@ -368,8 +372,12 @@ function ProductsContent() {
       if (pending.status != null) body.status = pending.status;
       if (pending.lifecycle_status != null) body.lifecycle_status = pending.lifecycle_status;
       if (pending.owner_id !== undefined) {
-        if (pending.owner_id === null) body.clear_owner = true;
-        else body.owner_id = pending.owner_id;
+        const raw = pending.owner_id;
+        if (raw === null || raw === '' || raw === 'none') {
+          body.clear_owner = true;
+        } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(raw))) {
+          body.owner_id = String(raw);
+        }
       }
       return api.products.update(id, body);
     },
@@ -769,7 +777,7 @@ function ProductsContent() {
                 const lifecycleDisplay = pending?.lifecycle_status ?? p.lifecycle_status;
                 const ownerDisplay = pending?.owner_id !== undefined ? (pending.owner_id ?? 'none') : (p.owner_id ?? 'none');
                 const isEditingThisRow = editingProductId === p.id;
-                const canEditProduct = !!(user?.id && p.owner_id === user.id);
+                const canEditProduct = !!(user?.id && (p.owner_id === user.id || isAdmin));
                 const showEditActions = canEditProduct && (selectedProductId === p.id || isEditingThisRow);
                 const serial = pendingIndex + 1;
                 const showRed = dependencyInfo.isDependent.has(p.id);
@@ -1015,7 +1023,7 @@ function ProductsContent() {
                 const lifecycleDisplay = pending?.lifecycle_status ?? p.lifecycle_status;
                 const ownerDisplay = pending?.owner_id !== undefined ? (pending.owner_id ?? 'none') : (p.owner_id ?? 'none');
                 const isEditingThisRow = editingProductId === p.id;
-                const canEditProduct = !!(user?.id && p.owner_id === user.id);
+                const canEditProduct = !!(user?.id && (p.owner_id === user.id || isAdmin));
                 const showEditActions = canEditProduct && (selectedProductId === p.id || isEditingThisRow);
                 const serial = pendingProducts.length + otherIndex + 1;
                 const showRed = dependencyInfo.isDependent.has(p.id);
@@ -1391,7 +1399,7 @@ function ProductsContent() {
                 </p>
                 {(applyEditMutation.error?.message === 'Bad Request' || !applyEditMutation.error?.message) && (
                   <p className="text-red-600 text-xs mt-2">
-                    Common causes: set Lifecycle to <strong>Active</strong> only if the product has a &quot;Pricing Committee Approval&quot; milestone; use a valid user as Owner.
+                    Common causes: use a valid user as Owner (or &quot;No owner&quot; to clear).
                   </p>
                 )}
                 <p className="text-red-600 text-xs mt-1">

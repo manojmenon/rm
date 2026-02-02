@@ -4,13 +4,15 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rm/roadmap/internal/models"
 	"gorm.io/gorm"
 )
 
 type ActivityRepository interface {
 	Create(ctx context.Context, entry *models.ActivityLog) error
-	List(ctx context.Context, limit, offset int, action string, dateFrom, dateTo *time.Time, sortBy, order string) ([]models.ActivityLog, int64, error)
+	// List returns activity logs. If userID is not nil, only entries for that user are returned.
+	List(ctx context.Context, limit, offset int, action string, dateFrom, dateTo *time.Time, sortBy, order string, userID *uuid.UUID) ([]models.ActivityLog, int64, error)
 }
 
 type activityRepository struct {
@@ -25,8 +27,11 @@ func (r *activityRepository) Create(ctx context.Context, entry *models.ActivityL
 	return r.db.WithContext(ctx).Create(entry).Error
 }
 
-func (r *activityRepository) List(ctx context.Context, limit, offset int, action string, dateFrom, dateTo *time.Time, sortBy, order string) ([]models.ActivityLog, int64, error) {
+func (r *activityRepository) List(ctx context.Context, limit, offset int, action string, dateFrom, dateTo *time.Time, sortBy, order string, userID *uuid.UUID) ([]models.ActivityLog, int64, error) {
 	q := r.db.WithContext(ctx).Model(&models.ActivityLog{})
+	if userID != nil {
+		q = q.Where("user_id = ?", *userID)
+	}
 	if action != "" {
 		q = q.Where("action = ?", action)
 	}

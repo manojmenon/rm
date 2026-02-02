@@ -11,14 +11,19 @@ import (
 	"github.com/rm/roadmap/internal/middleware"
 	"github.com/rm/roadmap/internal/models"
 	"github.com/rm/roadmap/internal/services"
+	"go.uber.org/zap"
 )
 
 type ProductHandler struct {
 	productService *services.ProductService
+	log            *zap.Logger
 }
 
-func NewProductHandler(productService *services.ProductService) *ProductHandler {
-	return &ProductHandler{productService: productService}
+func NewProductHandler(productService *services.ProductService, log *zap.Logger) *ProductHandler {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	return &ProductHandler{productService: productService, log: log}
 }
 
 func (h *ProductHandler) getCaller(c *gin.Context) (uuid.UUID, models.Role) {
@@ -135,6 +140,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	}
 	var req dto.ProductUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.log.Warn("product update bind error", zap.String("product_id", id.String()), zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -147,11 +153,8 @@ func (h *ProductHandler) Update(c *gin.Context) {
 			return
 		}
 		if err == services.ErrInvalidOwnerID {
+			h.log.Warn("product update invalid owner_id", zap.String("product_id", id.String()))
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid owner_id"})
-			return
-		}
-		if err == services.ErrProductActiveRequiresPricingCommitteeApproval {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

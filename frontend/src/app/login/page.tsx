@@ -46,7 +46,14 @@ export default function LoginPage() {
       <h2 className="text-2xl font-semibold mb-6">Sign in</h2>
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
-          <p className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</p>
+          <div className="text-red-600 text-sm bg-red-50 p-2 rounded space-y-1">
+            <p>{error}</p>
+            {(error.includes('500') || error.includes('Server error') || error.includes('Backend')) && (
+              <p className="text-xs text-gray-600 mt-1">
+                Check: <code className="bg-red-100 px-1">docker compose logs backend</code> and DevTools → Network → failed request → Response tab.
+              </p>
+            )}
+          </div>
         )}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

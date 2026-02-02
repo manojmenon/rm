@@ -39,8 +39,11 @@ async function fetchApi<T>(
       const err = JSON.parse(text) as { error?: string; message?: string; msg?: string };
       message = err?.error ?? err?.message ?? err?.msg ?? message;
     } catch {
-      if (text && text.length < 200) message = text;
-      else if (res.status === 502 || res.status === 500) message = 'Backend may be down. Ensure the Go server is running on port 8080 and Postgres is up.';
+      if (text && text.length < 300) message = text.trim() || message;
+      else if (res.status === 502 || res.status === 500) message = 'Backend unreachable or error. Check: backend running (docker compose logs backend), DB_HOST set correctly (postgres or host IP), and DevTools → Network → failed request → Response.';
+    }
+    if (res.status === 500 && message === res.statusText) {
+      message = `Server error (500). Backend may have returned a non-JSON response. Check docker compose logs backend and DevTools → Network → failed request → Response.`;
     }
     throw new Error(message);
   }
@@ -238,7 +241,7 @@ export const api = {
   productVersionDependencies: {
     listByProductVersion: (versionId: string) =>
       fetchApi<ProductVersionDependency[]>(`/product-versions/${versionId}/dependencies`),
-    create: (body: { source_product_version_id: string; target_product_id: string; target_product_version_id?: string; required_status: string }) =>
+    create: (body: { source_product_version_id: string; target_product_id: string; target_product_version_id?: string; required_status?: string }) =>
       fetchApi<ProductVersionDependency>('/product-version-dependencies', { method: 'POST', body: JSON.stringify(body) }),
     delete: (id: string) => fetchApi<void>(`/product-version-dependencies/${id}`, { method: 'DELETE' }),
   },

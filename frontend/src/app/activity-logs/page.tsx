@@ -1,7 +1,7 @@
 'use client';
 
 import { RequireAuth } from '@/components/RequireAuth';
-import { ActivityLogsContent } from '@/app/admin/activity-logs/page';
+import { ActivityLogsContent } from '@/components/ActivityLogsContent';
 
 export default function ActivityLogsPage() {
   return (
