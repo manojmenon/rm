@@ -10,13 +10,14 @@ import (
 )
 
 type DependencyService struct {
-	depRepo     repositories.DependencyRepository
+	depRepo      repositories.DependencyRepository
 	milestoneRepo repositories.MilestoneRepository
-	auditSvc    *AuditService
+	auditSvc     *AuditService
+	activitySvc  *ActivityService
 }
 
-func NewDependencyService(depRepo repositories.DependencyRepository, milestoneRepo repositories.MilestoneRepository, auditSvc *AuditService) *DependencyService {
-	return &DependencyService{depRepo: depRepo, milestoneRepo: milestoneRepo, auditSvc: auditSvc}
+func NewDependencyService(depRepo repositories.DependencyRepository, milestoneRepo repositories.MilestoneRepository, auditSvc *AuditService, activitySvc *ActivityService) *DependencyService {
+	return &DependencyService{depRepo: depRepo, milestoneRepo: milestoneRepo, auditSvc: auditSvc, activitySvc: activitySvc}
 }
 
 func (s *DependencyService) Create(ctx context.Context, req dto.DependencyCreateRequest, meta dto.AuditMeta) (*dto.DependencyResponse, error) {
@@ -103,6 +104,17 @@ func (s *DependencyService) Delete(ctx context.Context, id uuid.UUID, meta dto.A
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "delete",
+			EntityType: "dependency",
+			EntityID:   id.String(),
+			Details:    string(d.Type),
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	return nil

@@ -17,6 +17,7 @@ type ProductDeletionRequestService struct {
 	versionRepo     repositories.ProductVersionRepository
 	userRepo        repositories.UserRepository
 	auditSvc        *AuditService
+	activitySvc     *ActivityService
 	notificationSvc *NotificationService
 }
 
@@ -26,6 +27,7 @@ func NewProductDeletionRequestService(
 	versionRepo repositories.ProductVersionRepository,
 	userRepo repositories.UserRepository,
 	auditSvc *AuditService,
+	activitySvc *ActivityService,
 	notificationSvc *NotificationService,
 ) *ProductDeletionRequestService {
 	return &ProductDeletionRequestService{
@@ -34,6 +36,7 @@ func NewProductDeletionRequestService(
 		versionRepo:     versionRepo,
 		userRepo:        userRepo,
 		auditSvc:        auditSvc,
+		activitySvc:     activitySvc,
 		notificationSvc: notificationSvc,
 	}
 }
@@ -60,9 +63,25 @@ func (s *ProductDeletionRequestService) Create(ctx context.Context, productID uu
 			TraceID:    meta.TraceID,
 		})
 	}
-	// Notify Admin users only (so they can review and approve/reject)
+	if s.activitySvc != nil && meta.UserID != nil {
+		details := req.ProductID.String()
+		if p, err := s.productRepo.GetByID(productID); err == nil {
+			details = p.Name
+		}
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "create",
+			EntityType: "product_deletion_request",
+			EntityID:   req.ID.String(),
+			Details:    details,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
+		})
+	}
+	// Notify admin and superadmin users (so they can review and approve/reject)
 	if s.notificationSvc != nil && s.userRepo != nil {
 		admins, _ := s.userRepo.ListByRole(models.RoleAdmin)
+		superadmins, _ := s.userRepo.ListByRole(models.RoleSuperadmin)
 		productName := ""
 		if p, err := s.productRepo.GetByID(productID); err == nil {
 			productName = p.Name
@@ -80,6 +99,11 @@ func (s *ProductDeletionRequestService) Create(ctx context.Context, productID uu
 				_, _ = s.notificationSvc.Create(admins[i].ID, models.NotificationTypeProductDeletionRequestSubmitted, title, message, "product_deletion_request", &reqID)
 			}
 		}
+		for i := range superadmins {
+			if superadmins[i].ID != requestedBy {
+				_, _ = s.notificationSvc.Create(superadmins[i].ID, models.NotificationTypeProductDeletionRequestSubmitted, title, message, "product_deletion_request", &reqID)
+			}
+		}
 	}
 	return resp, nil
 }
@@ -89,7 +113,7 @@ func (s *ProductDeletionRequestService) List(status *models.RequestStatus, calle
 	var requestedBy *uuid.UUID
 	if ownerID != nil {
 		requestedBy = ownerID
-	} else if strings.ToLower(callerRole) != "admin" {
+	} else if !models.Role(strings.ToLower(callerRole)).IsAdminOrAbove() {
 		productOwnerID = &callerID
 	}
 	list, err := s.reqRepo.List(status, productOwnerID, requestedBy, fromDate, toDate)
@@ -158,6 +182,21 @@ func (s *ProductDeletionRequestService) Approve(ctx context.Context, id uuid.UUI
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		details := string(req.Status)
+		if p, err := s.productRepo.GetByID(req.ProductID); err == nil {
+			details = p.Name + " " + details
+		}
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "save",
+			EntityType: "product_deletion_request",
+			EntityID:   id.String(),
+			Details:    details,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	if s.notificationSvc != nil {

@@ -2,22 +2,25 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rm/roadmap/internal/dto"
+	"github.com/rm/roadmap/internal/middleware"
 	"github.com/rm/roadmap/internal/models"
 	"github.com/rm/roadmap/internal/repositories"
 	"github.com/rm/roadmap/internal/services"
 )
 
 type UserHandler struct {
-	userRepo     repositories.UserRepository
-	dottedRepo   repositories.UserDottedLineRepository
+	userRepo    repositories.UserRepository
+	dottedRepo  repositories.UserDottedLineRepository
+	productRepo repositories.ProductRepository
 }
 
-func NewUserHandler(userRepo repositories.UserRepository, dottedRepo repositories.UserDottedLineRepository) *UserHandler {
-	return &UserHandler{userRepo: userRepo, dottedRepo: dottedRepo}
+func NewUserHandler(userRepo repositories.UserRepository, dottedRepo repositories.UserDottedLineRepository, productRepo repositories.ProductRepository) *UserHandler {
+	return &UserHandler{userRepo: userRepo, dottedRepo: dottedRepo, productRepo: productRepo}
 }
 
 func (h *UserHandler) List(c *gin.Context) {
@@ -72,6 +75,22 @@ func (h *UserHandler) Update(c *gin.Context) {
 	u, err := h.userRepo.GetByID(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	callerRoleStr, _ := c.Get(middleware.UserRoleKey)
+	callerRole := models.Role("")
+	if r, ok := callerRoleStr.(string); ok {
+		callerRole = models.Role(r)
+	}
+	// Only superadmin can set role to superadmin or modify a user who is superadmin
+	if req.Role != nil && strings.ToLower(*req.Role) == "superadmin" {
+		if strings.ToLower(string(callerRole)) != "superadmin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "only superadmin can set role to superadmin"})
+			return
+		}
+	}
+	if strings.ToLower(string(u.Role)) == "superadmin" && strings.ToLower(string(callerRole)) != "superadmin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only superadmin can modify a superadmin user"})
 		return
 	}
 	if req.Name != nil {
@@ -220,6 +239,55 @@ func (h *UserHandler) RemoveDottedLineManager(c *gin.Context) {
 		return
 	}
 	if err := h.dottedRepo.Delete(userID, managerID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *UserHandler) RemoveFromProducts(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	if _, err := h.userRepo.GetByID(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if err := h.productRepo.ClearOwnerForUser(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *UserHandler) Delete(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	callerIDStr, _ := c.Get(middleware.UserIDKey)
+	callerID, _ := uuid.Parse(callerIDStr.(string))
+	if id == callerID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot delete your own user"})
+		return
+	}
+	u, err := h.userRepo.GetByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if strings.ToLower(string(u.Role)) == "superadmin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete a superadmin user"})
+		return
+	}
+	if err := h.productRepo.ClearOwnerForUser(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.userRepo.Delete(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

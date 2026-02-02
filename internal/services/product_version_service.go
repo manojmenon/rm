@@ -13,10 +13,11 @@ type ProductVersionService struct {
 	versionRepo repositories.ProductVersionRepository
 	productRepo repositories.ProductRepository
 	auditSvc    *AuditService
+	activitySvc *ActivityService
 }
 
-func NewProductVersionService(versionRepo repositories.ProductVersionRepository, productRepo repositories.ProductRepository, auditSvc *AuditService) *ProductVersionService {
-	return &ProductVersionService{versionRepo: versionRepo, productRepo: productRepo, auditSvc: auditSvc}
+func NewProductVersionService(versionRepo repositories.ProductVersionRepository, productRepo repositories.ProductRepository, auditSvc *AuditService, activitySvc *ActivityService) *ProductVersionService {
+	return &ProductVersionService{versionRepo: versionRepo, productRepo: productRepo, auditSvc: auditSvc, activitySvc: activitySvc}
 }
 
 // canModifyVersions returns nil if caller (admin or product owner) can add/modify versions when product is active.
@@ -25,7 +26,7 @@ func (s *ProductVersionService) canModifyVersions(productID, callerID uuid.UUID,
 	if err != nil {
 		return err
 	}
-	if callerRole == models.RoleAdmin {
+	if callerRole.IsAdminOrAbove() {
 		return nil
 	}
 	if p.LifecycleStatus != models.LifecycleActive {
@@ -70,6 +71,17 @@ func (s *ProductVersionService) Create(ctx context.Context, req dto.ProductVersi
 			TraceID:    meta.TraceID,
 		})
 	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "create",
+			EntityType: "product_version",
+			EntityID:   pv.ID.String(),
+			Details:    pv.Version,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
+		})
+	}
 	return resp, nil
 }
 
@@ -108,6 +120,17 @@ func (s *ProductVersionService) Update(ctx context.Context, id uuid.UUID, req dt
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "save",
+			EntityType: "product_version",
+			EntityID:   id.String(),
+			Details:    pv.Version,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	return resp, nil
@@ -157,6 +180,17 @@ func (s *ProductVersionService) Delete(ctx context.Context, id uuid.UUID, caller
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "delete",
+			EntityType: "product_version",
+			EntityID:   id.String(),
+			Details:    pv.Version,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	return nil

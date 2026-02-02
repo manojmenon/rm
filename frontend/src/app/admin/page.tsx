@@ -56,7 +56,7 @@ function AdminContent() {
 export default function AdminPage() {
   return (
     <RequireAuth>
-      <RequireRole allowedRoles={['admin']}>
+      <RequireRole allowedRoles={['admin', 'superadmin']}>
         <AdminContent />
       </RequireRole>
     </RequireAuth>

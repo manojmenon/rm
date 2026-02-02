@@ -40,7 +40,7 @@ func (s *ProductVersionDependencyService) canModifySourceVersion(sourceProductVe
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if callerRole == models.RoleAdmin {
+	if callerRole.IsAdminOrAbove() {
 		return p.ID, nil
 	}
 	if p.OwnerID == nil || *p.OwnerID != callerID {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { RequireAuth } from '@/components/RequireAuth';
@@ -101,6 +101,7 @@ function ProductsContent() {
   }, [searchParams]);
   const [dateRange, setDateRange] = useState<DateRangeFilters>(getDefaultDateRange);
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>(defaultColumnFilters);
+  const [tableSearchOpen, setTableSearchOpen] = useState(false);
   const [sortBy, setSortBy] = useState<string>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [confirmDeletionProductId, setConfirmDeletionProductId] = useState<string | null>(null);
@@ -108,12 +109,12 @@ function ProductsContent() {
   const [confirmDeletionProductName, setConfirmDeletionProductName] = useState('');
   const [confirmDeletionTyped, setConfirmDeletionTyped] = useState('');
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [hoveredProductId, setHoveredProductId] = useState<string | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [pendingEditsByProductId, setPendingEditsByProductId] = useState<Record<string, PendingRowEdits>>({});
   const [confirmEditProduct, setConfirmEditProduct] = useState<ConfirmEditProduct | null>(null);
   const [confirmProductNameTyped, setConfirmProductNameTyped] = useState('');
   const [confirmVersionTyped, setConfirmVersionTyped] = useState('');
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = (() => { const r = user?.role?.toLowerCase(); return r === 'admin' || r === 'superadmin'; })();
 
   const effectiveDateRange =
     dateRangePreset === 'all'
@@ -176,7 +177,7 @@ function ProductsContent() {
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
     queryFn: () => api.users.list(),
-    enabled: isAdmin,
+    enabled: true,
     staleTime: 0,
   });
   const { data: deletionRequests = [] } = useQuery({
@@ -201,17 +202,109 @@ function ProductsContent() {
   const otherProducts = products.filter(
     (p) => !isPendingStatus(p.status) && (!isAdmin || !pendingDeletionByProductId.has(p.id))
   );
+
+  const productIds = useMemo(
+    () => [...pendingProducts, ...otherProducts].map((p) => p.id),
+    [pendingProducts, otherProducts]
+  );
+  const [versionQueriesRevealCount, setVersionQueriesRevealCount] = useState(12);
+  useEffect(() => {
+    if (productIds.length === 0) return;
+    setVersionQueriesRevealCount(12);
+    const t = setTimeout(() => setVersionQueriesRevealCount(productIds.length), 1200);
+    return () => clearTimeout(t);
+  }, [productIds.length]);
+  const versionQueries = useQueries({
+    queries: productIds.map((id, index) => ({
+      queryKey: ['product-versions', id],
+      queryFn: () => api.productVersions.listByProduct(id),
+      staleTime: 60 * 1000,
+      enabled: index < versionQueriesRevealCount,
+    })),
+  });
+  const versionEntries = useMemo(() => {
+    return productIds.flatMap((id, i) =>
+      (versionQueries[i]?.data ?? []).map((v: { id: string }) => ({ productId: id, versionId: v.id }))
+    );
+  }, [productIds, versionQueries]);
+  const [depQueriesRevealCount, setDepQueriesRevealCount] = useState(15);
+  useEffect(() => {
+    if (versionEntries.length === 0) return;
+    setDepQueriesRevealCount(15);
+    const t = setTimeout(() => setDepQueriesRevealCount(versionEntries.length), 1200);
+    return () => clearTimeout(t);
+  }, [versionEntries.length]);
+  const depQueries = useQueries({
+    queries: versionEntries.map((ve, index) => ({
+      queryKey: ['product-version-deps', ve.versionId],
+      queryFn: () => api.productVersionDependencies.listByProductVersion(ve.versionId),
+      enabled: !!ve.versionId && index < depQueriesRevealCount,
+      staleTime: 60 * 1000,
+    })),
+  });
+  const productIdToSerial = useMemo(
+    () => new Map(productIds.map((id, i) => [id, i + 1])),
+    [productIds]
+  );
+  const dependencyInfo = useMemo(() => {
+    const isDependent = new Set<string>();
+    const hasDependency = new Set<string>();
+    const relatedSerialsByProductId = new Map<string, number[]>();
+    productIds.forEach((id) => relatedSerialsByProductId.set(id, []));
+    depQueries.forEach((q, idx) => {
+      const deps = q.data ?? [];
+      const ve = versionEntries[idx];
+      if (!ve) return;
+      const sourceProductId = ve.productId;
+      deps.forEach((d: { target_product_id: string }) => {
+        const tgtId = d.target_product_id;
+        if (productIds.includes(sourceProductId)) {
+          hasDependency.add(sourceProductId);
+          const serial = productIdToSerial.get(tgtId);
+          if (serial != null) {
+            const arr = relatedSerialsByProductId.get(sourceProductId)!;
+            if (!arr.includes(serial)) arr.push(serial);
+          }
+        }
+        if (productIds.includes(tgtId)) {
+          isDependent.add(tgtId);
+          const serial = productIdToSerial.get(sourceProductId);
+          if (serial != null) {
+            const arr = relatedSerialsByProductId.get(tgtId)!;
+            if (!arr.includes(serial)) arr.push(serial);
+          }
+        }
+      });
+    });
+    productIds.forEach((id) => {
+      const arr = relatedSerialsByProductId.get(id)!;
+      arr.sort((a, b) => a - b);
+    });
+    return {
+      isDependent,
+      hasDependency,
+      relatedSerialsByProductId,
+      productIdToSerial,
+    };
+  }, [productIds, versionEntries, depQueries, productIdToSerial]);
+
+  const [highlightedSerials, setHighlightedSerials] = useState<Set<number> | null>(null);
+  const [superscriptPinned, setSuperscriptPinned] = useState(false);
+
+  const ROW_BGS = ['bg-white', 'bg-slate-50/60', 'bg-blue-50/40', 'bg-emerald-50/40', 'bg-amber-50/40', 'bg-violet-50/40'];
+  const getRowBg = (serial: number) => ROW_BGS[(serial - 1) % ROW_BGS.length];
+
   const handleSort = (sortKey: string) => {
     setSortBy(sortKey);
     setSortOrder((o) => (sortBy === sortKey ? (o === 'asc' ? 'desc' : 'asc') : 'asc'));
     setOffset(0);
   };
   const SortableTh = ({ label, sortKey }: { label: string; sortKey: string }) => (
-    <th className="text-left px-4 py-3 font-medium">
+    <th className="text-left px-4 py-3 font-medium text-dhl-red">
       <button
         type="button"
         onClick={() => handleSort(sortKey)}
-        className="flex items-center gap-1 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-400 rounded"
+        className="flex items-center gap-1 hover:text-dhl-red/80 focus:outline-none focus:ring-2 focus:ring-dhl-red focus:ring-offset-1 rounded"
       >
         {label}
         {sortBy === sortKey && (
@@ -339,8 +432,6 @@ function ProductsContent() {
   };
 
   const handleRowLeave = (p: { id: string; name: string; version: string }) => {
-    if (!isAdmin) return;
-    setHoveredProductId(null);
     if (editingProductId !== p.id) return;
     const pending = pendingEditsByProductId[p.id];
     if (pending && Object.keys(pending).length > 0) {
@@ -361,7 +452,6 @@ function ProductsContent() {
   };
 
   const handleToggleEditMode = (p: { id: string; name: string; version: string }) => {
-    if (!isAdmin) return;
     if (editingProductId === p.id) {
       const pending = pendingEditsByProductId[p.id];
       if (pending && Object.keys(pending).length > 0) {
@@ -580,103 +670,175 @@ function ProductsContent() {
       {isLoading ? (
         <p className="text-gray-500">Loading...</p>
       ) : (
-        <div className="card overflow-hidden p-0">
+        <div className="rounded-xl border-2 border-dhl-red/30 bg-white shadow-sm overflow-hidden">
           <div className="overflow-x-auto -mx-px">
             <table className="w-full min-w-[640px]">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-dhl-yellow/25 border-b-2 border-dhl-red/40">
               <tr>
+                <th className="text-left px-4 py-3 font-medium w-10">
+                  <button
+                    type="button"
+                    onClick={() => setTableSearchOpen((o) => !o)}
+                    className={`p-1.5 rounded transition-colors ${tableSearchOpen ? 'bg-dhl-yellow text-dhl-red' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-700'}`}
+                    aria-label={tableSearchOpen ? 'Hide table search' : 'Show table search'}
+                    title={tableSearchOpen ? 'Hide search' : 'Search in table'}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="m21 21-4.35-4.35" />
+                    </svg>
+                  </button>
+                </th>
+                <th className="text-left px-4 py-3 font-medium text-dhl-red w-12">#</th>
                 <SortableTh label="Name" sortKey="name" />
                 <SortableTh label="Version" sortKey="version" />
                 <SortableTh label="Status" sortKey="status" />
                 <SortableTh label="Lifecycle" sortKey="lifecycle_status" />
                 <SortableTh label="Owner" sortKey="owner_id" />
-                {isAdmin && <th className="text-left px-4 py-3 font-medium">Deletion request</th>}
-                {isAdmin && <th className="text-left px-4 py-3 font-medium w-10">Edit</th>}
-                <th></th>
+                <th className="text-left px-4 py-3 font-medium w-24">Action</th>
               </tr>
-              <tr className="bg-slate-100/80 border-b border-slate-200">
-                <th className="px-4 py-2">
-                  <input
-                    type="text"
-                    value={columnFilters.name}
-                    onChange={(e) => setColumnFilter('name', e.target.value)}
-                    placeholder="Search…"
-                    className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
-                    aria-label="Filter by Name"
-                  />
-                </th>
-                <th className="px-4 py-2">
-                  <input
-                    type="text"
-                    value={columnFilters.version}
-                    onChange={(e) => setColumnFilter('version', e.target.value)}
-                    placeholder="Search…"
-                    className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
-                    aria-label="Filter by Version"
-                  />
-                </th>
-                <th className="px-4 py-2">
-                  <input
-                    type="text"
-                    value={columnFilters.status}
-                    onChange={(e) => setColumnFilter('status', e.target.value)}
-                    placeholder="Search…"
-                    className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
-                    aria-label="Filter by Status"
-                  />
-                </th>
-                <th className="px-4 py-2">
-                  <input
-                    type="text"
-                    value={columnFilters.lifecycle}
-                    onChange={(e) => setColumnFilter('lifecycle', e.target.value)}
-                    placeholder="Search…"
-                    className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
-                    aria-label="Filter by Lifecycle"
-                  />
-                </th>
-                <th className="px-4 py-2">
-                  <input
-                    type="text"
-                    value={columnFilters.owner}
-                    onChange={(e) => setColumnFilter('owner', e.target.value)}
-                    placeholder="Search…"
-                    className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
-                    aria-label="Filter by Owner"
-                  />
-                </th>
-                {isAdmin && <th className="px-4 py-2" />}
-                {isAdmin && <th className="px-4 py-2" />}
-                <th className="px-4 py-2" />
-              </tr>
+              {tableSearchOpen && (
+                <tr className="bg-dhl-yellow/15 border-b border-dhl-red/30">
+                  <th className="px-4 py-2" />
+                  <th className="px-4 py-2" />
+                  <th className="px-4 py-2">
+                    <input
+                      type="text"
+                      value={columnFilters.name}
+                      onChange={(e) => setColumnFilter('name', e.target.value)}
+                      placeholder="Search…"
+                      className="w-full rounded border border-dhl-red/40 px-2 py-1.5 text-sm focus:ring-2 focus:ring-dhl-red focus:border-dhl-red"
+                      aria-label="Filter by Name"
+                    />
+                  </th>
+                  <th className="px-4 py-2">
+                    <input
+                      type="text"
+                      value={columnFilters.version}
+                      onChange={(e) => setColumnFilter('version', e.target.value)}
+                      placeholder="Search…"
+                      className="w-full rounded border border-dhl-red/40 px-2 py-1.5 text-sm focus:ring-2 focus:ring-dhl-red focus:border-dhl-red"
+                      aria-label="Filter by Version"
+                    />
+                  </th>
+                  <th className="px-4 py-2">
+                    <input
+                      type="text"
+                      value={columnFilters.status}
+                      onChange={(e) => setColumnFilter('status', e.target.value)}
+                      placeholder="Search…"
+                      className="w-full rounded border border-dhl-red/40 px-2 py-1.5 text-sm focus:ring-2 focus:ring-dhl-red focus:border-dhl-red"
+                      aria-label="Filter by Status"
+                    />
+                  </th>
+                  <th className="px-4 py-2">
+                    <input
+                      type="text"
+                      value={columnFilters.lifecycle}
+                      onChange={(e) => setColumnFilter('lifecycle', e.target.value)}
+                      placeholder="Search…"
+                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
+                      aria-label="Filter by Lifecycle"
+                    />
+                  </th>
+                  <th className="px-4 py-2">
+                    <input
+                      type="text"
+                      value={columnFilters.owner}
+                      onChange={(e) => setColumnFilter('owner', e.target.value)}
+                      placeholder="Search…"
+                      className="w-full rounded border border-dhl-red/40 px-2 py-1.5 text-sm focus:ring-2 focus:ring-dhl-red focus:border-dhl-red"
+                      aria-label="Filter by Owner"
+                    />
+                  </th>
+                  <th className="px-4 py-2" />
+                </tr>
+              )}
             </thead>
             {pendingProducts.length > 0 && (
               <tbody className="bg-amber-50/30">
                 <tr>
-                  <td colSpan={isAdmin ? 8 : 6} className="px-4 py-2 text-sm font-semibold text-amber-800 border-b border-amber-200">
+                  <td colSpan={8} className="px-4 py-2 text-sm font-semibold text-amber-800 border-b border-amber-200">
                     Pending ({pendingProducts.length})
                   </td>
                 </tr>
-                {pendingProducts.map((p) => {
+                {pendingProducts.map((p, pendingIndex) => {
                 const pendingDel = isAdmin ? pendingDeletionByProductId.get(p.id) : null;
                 const pending = pendingEditsByProductId[p.id];
                 const statusDisplay = pending?.status ?? p.status;
                 const lifecycleDisplay = pending?.lifecycle_status ?? p.lifecycle_status;
                 const ownerDisplay = pending?.owner_id !== undefined ? (pending.owner_id ?? 'none') : (p.owner_id ?? 'none');
                 const isEditingThisRow = editingProductId === p.id;
-                const showEditActions = isAdmin && (hoveredProductId === p.id || isEditingThisRow);
+                const canEditProduct = !!(user?.id && p.owner_id === user.id);
+                const showEditActions = canEditProduct && (selectedProductId === p.id || isEditingThisRow);
+                const serial = pendingIndex + 1;
+                const showRed = dependencyInfo.isDependent.has(p.id);
+                const showBlue = dependencyInfo.hasDependency.has(p.id);
+                const depSerials = dependencyInfo.relatedSerialsByProductId.get(p.id) ?? [];
+                const isDependentRow = showRed;
                 return (
                   <tr
                     key={p.id}
-                    className="border-b last:border-0 hover:bg-gray-50"
-                    onMouseEnter={() => isAdmin && setHoveredProductId(p.id)}
-                    onMouseLeave={() => isAdmin && setHoveredProductId(null)}
-                    onClick={() => isAdmin && !isEditingThisRow && setHoveredProductId((prev) => (prev === p.id ? prev : p.id))}
+                    className={`group/row border-b last:border-0 ${canEditProduct ? 'cursor-pointer hover:bg-dhl-yellow/10' : 'hover:bg-slate-50/50'} ${getRowBg(serial)} ${highlightedSerials?.has(serial) ? 'ring-2 ring-amber-400 ring-inset bg-amber-50/70' : ''} ${selectedProductId === p.id ? 'bg-dhl-yellow/15' : ''}`}
+                    onMouseLeave={() => handleRowLeave(p)}
+                    onClick={() => canEditProduct && !isEditingThisRow && setSelectedProductId((prev) => (prev === p.id ? null : p.id))}
                   >
-                    <td className="px-4 py-3">{p.name}</td>
+                    <td className="px-4 py-3 w-10" />
+                    <td className="px-4 py-3 text-gray-500 tabular-nums w-12">{serial}</td>
+                    <td className="px-4 py-3">
+                      <span className={`flex items-center gap-1.5 ${isDependentRow ? 'font-bold italic text-red-600' : ''}`}>
+                        {pendingDel && (
+                          isAdmin ? (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); openConfirmDeletion(p.id, pendingDel.id, p.name); }}
+                              className="text-amber-600 hover:text-amber-800 shrink-0 p-0.5 rounded focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              title="Confirm or reject deletion request"
+                              aria-label="Confirm deletion request"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                            </button>
+                          ) : (
+                            <span className="text-amber-600 shrink-0" title="Pending deletion request" aria-label="Pending deletion request">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                            </span>
+                          )
+                        )}
+                        <Link href={`/products/${p.id}`} className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 rounded">
+                          {p.name}
+                        </Link>
+                        {showRed && <span className="text-red-600 font-bold ml-0.5" aria-label="Dependent product">*</span>}
+                        {showBlue && <span className="text-blue-600 font-bold ml-0.5" aria-label="Has dependency">*</span>}
+                        {(showRed || showBlue) && depSerials.length > 0 && (
+                          <sup
+                            className="text-slate-500 font-normal ml-0.5 cursor-pointer rounded px-0.5 hover:bg-amber-100 hover:text-amber-800"
+                            title="Dependency row numbers — hover or click to highlight rows"
+                            role="button"
+                            tabIndex={0}
+                            onMouseEnter={() => { setHighlightedSerials(new Set(depSerials)); setSuperscriptPinned(false); }}
+                            onMouseLeave={() => { if (!superscriptPinned) setHighlightedSerials(null); }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const same = highlightedSerials && depSerials.length === highlightedSerials.size && depSerials.every((n) => highlightedSerials.has(n));
+                              if (superscriptPinned && same) {
+                                setHighlightedSerials(null);
+                                setSuperscriptPinned(false);
+                              } else {
+                                setHighlightedSerials(new Set(depSerials));
+                                setSuperscriptPinned(true);
+                              }
+                            }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.target as HTMLElement).click(); } }}
+                          >
+                            ({depSerials.join(', ')})
+                          </sup>
+                        )}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">{p.version || '—'}</td>
                     <td className="px-4 py-3">
-                      {isAdmin && isEditingThisRow ? (
+                      {canEditProduct && isEditingThisRow ? (
                         <select
                           value={normalizeProductStatus(statusDisplay)}
                           onChange={(e) => {
@@ -688,20 +850,20 @@ function ProductsContent() {
                           }}
                           className="input py-1 text-sm w-auto min-w-[100px]"
                           disabled={applyEditMutation.isPending}
-                          title="Set product status (admin)"
+                          title="Set product status (owner)"
                         >
                           <option value="pending">Pending</option>
                           <option value="approved">Approved</option>
                           <option value="archived">Archived</option>
                         </select>
                       ) : (
-                        <span className="px-2 py-0.5 rounded text-sm bg-gray-100">
+                        <span className="px-2 py-0.5 rounded text-sm bg-dhl-yellow/30 text-slate-800">
                           {productStatusLabel(statusDisplay)}
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {isAdmin && isEditingThisRow ? (
+                      {canEditProduct && isEditingThisRow ? (
                         <select
                           value={lifecycleDisplay}
                           onChange={(e) => {
@@ -713,7 +875,7 @@ function ProductsContent() {
                           }}
                           className="input py-1 text-sm w-auto min-w-[120px]"
                           disabled={applyEditMutation.isPending}
-                          title="Set lifecycle (admin)"
+                          title="Set lifecycle (owner)"
                         >
                           <option value="active">Active</option>
                           <option value="not_active">Not Active</option>
@@ -745,7 +907,7 @@ function ProductsContent() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {isAdmin && isEditingThisRow ? (
+                      {canEditProduct && isEditingThisRow ? (
                         <div>
                           <select
                             value={ownerDisplay}
@@ -761,7 +923,7 @@ function ProductsContent() {
                             }}
                             className="input py-1 text-sm w-auto min-w-[120px]"
                             disabled={applyEditMutation.isPending}
-                            title="Set owner (admin)"
+                            title="Set owner (owner)"
                           >
                             <option value="none">No owner</option>
                             {users.map((u) => (
@@ -775,30 +937,15 @@ function ProductsContent() {
                         p.owner?.name ?? '—'
                       )}
                     </td>
-                    {isAdmin && (
-                      <td className="px-4 py-3">
-                        {pendingDel ? (
-                          <button
-                            type="button"
-                            onClick={() => openConfirmDeletion(p.id, pendingDel.id, p.name)}
-                            className="text-amber-700 hover:text-amber-800 font-medium text-sm"
-                          >
-                            Confirm Deletion
-                          </button>
-                        ) : (
-                          <span className="text-gray-400 text-sm">—</span>
-                        )}
-                      </td>
-                    )}
-                    {isAdmin && (
-                      <td className="px-4 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <td className={`px-4 py-3 align-middle transition-opacity ${(selectedProductId === p.id || isEditingThisRow) ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'}`} onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
                         {showEditActions && (
                           isEditingThisRow ? (
-                            <div className="flex items-center gap-2">
+                            <>
                               <button
                                 type="button"
                                 onClick={() => handleToggleEditMode(p)}
-                                className="inline-flex items-center gap-1.5 min-h-[2rem] px-2 py-1 rounded-lg text-sm font-medium text-white bg-dhl-red hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red cursor-pointer"
+                                className="inline-flex items-center gap-1.5 min-h-[2rem] px-2 py-1 rounded-lg text-sm font-medium text-white bg-dhl-red hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-yellow cursor-pointer"
                                 title="Save changes"
                                 aria-label="Save"
                               >
@@ -813,13 +960,13 @@ function ProductsContent() {
                               >
                                 Cancel
                               </button>
-                            </div>
+                            </>
                           ) : (
                             <button
                               type="button"
                               onClick={() => setEditingProductId(p.id)}
-                              className="p-1.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-400"
-                              title="Edit status, lifecycle, owner"
+                              className="p-1.5 rounded text-dhl-red hover:bg-dhl-yellow/25 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red"
+                              title="Edit status, lifecycle, owner (owner only)"
                               aria-label="Edit"
                             >
                               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -829,16 +976,24 @@ function ProductsContent() {
                             </button>
                           )
                         )}
-                      </td>
-                    )}
-                    <td className="px-4 py-3">
-                      <Link href={`/products/${p.id}`} className="text-blue-600 hover:underline">
-                        View
-                      </Link>
-                      {' · '}
-                      <Link href={`/roadmap?product=${p.id}`} className="text-blue-600 hover:underline">
-                        Roadmap
-                      </Link>
+                        {canEditProduct ? (
+                          <Link
+                            href={`/products/${p.id}`}
+                            className="inline-flex p-1.5 rounded text-dhl-red hover:bg-dhl-yellow/25 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red"
+                            title="Edit product"
+                            aria-label="Edit product"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                              <path d="m15 5 4 4" />
+                            </svg>
+                          </Link>
+                        ) : (
+                          <Link href={`/products/${p.id}`} className="text-blue-600 hover:underline text-sm">
+                            View
+                          </Link>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -848,31 +1003,88 @@ function ProductsContent() {
             <tbody>
               {pendingProducts.length > 0 && otherProducts.length > 0 && (
                 <tr>
-                  <td colSpan={isAdmin ? 8 : 6} className="px-4 py-2 text-sm font-semibold text-gray-700 border-b border-slate-200 bg-slate-50/50">
+                  <td colSpan={8} className="px-4 py-2 text-sm font-semibold text-gray-700 border-b border-slate-200 bg-slate-50/50">
                     Products
                   </td>
                 </tr>
               )}
-              {otherProducts.map((p) => {
+              {otherProducts.map((p, otherIndex) => {
                 const pendingDel = isAdmin ? pendingDeletionByProductId.get(p.id) : null;
                 const pending = pendingEditsByProductId[p.id];
                 const statusDisplay = pending?.status ?? p.status;
                 const lifecycleDisplay = pending?.lifecycle_status ?? p.lifecycle_status;
                 const ownerDisplay = pending?.owner_id !== undefined ? (pending.owner_id ?? 'none') : (p.owner_id ?? 'none');
                 const isEditingThisRow = editingProductId === p.id;
-                const showEditActions = isAdmin && (hoveredProductId === p.id || isEditingThisRow);
+                const canEditProduct = !!(user?.id && p.owner_id === user.id);
+                const showEditActions = canEditProduct && (selectedProductId === p.id || isEditingThisRow);
+                const serial = pendingProducts.length + otherIndex + 1;
+                const showRed = dependencyInfo.isDependent.has(p.id);
+                const showBlue = dependencyInfo.hasDependency.has(p.id);
+                const depSerials = dependencyInfo.relatedSerialsByProductId.get(p.id) ?? [];
+                const isDependentRow = showRed;
                 return (
                   <tr
                     key={p.id}
-                    className="border-b last:border-0 hover:bg-gray-50"
-                    onMouseEnter={() => isAdmin && setHoveredProductId(p.id)}
-                    onMouseLeave={() => isAdmin && handleRowLeave(p)}
-                    onClick={() => isAdmin && !isEditingThisRow && setHoveredProductId((prev) => (prev === p.id ? prev : p.id))}
+                    className={`group/row border-b last:border-0 ${canEditProduct ? 'cursor-pointer hover:bg-dhl-yellow/10' : 'hover:bg-slate-50/50'} ${getRowBg(serial)} ${highlightedSerials?.has(serial) ? 'ring-2 ring-amber-400 ring-inset bg-amber-50/70' : ''} ${selectedProductId === p.id ? 'bg-dhl-yellow/15' : ''}`}
+                    onMouseLeave={() => handleRowLeave(p)}
+                    onClick={() => canEditProduct && !isEditingThisRow && setSelectedProductId((prev) => (prev === p.id ? null : p.id))}
                   >
-                    <td className="px-4 py-3">{p.name}</td>
+                    <td className="px-4 py-3 w-10" />
+                    <td className="px-4 py-3 text-gray-500 tabular-nums w-12">{serial}</td>
+                    <td className="px-4 py-3">
+                      <span className={`flex items-center gap-1.5 ${isDependentRow ? 'font-bold italic text-red-600' : ''}`}>
+                        {pendingDel && (
+                          isAdmin ? (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); openConfirmDeletion(p.id, pendingDel.id, p.name); }}
+                              className="text-amber-600 hover:text-amber-800 shrink-0 p-0.5 rounded focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              title="Confirm or reject deletion request"
+                              aria-label="Confirm deletion request"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                            </button>
+                          ) : (
+                            <span className="text-amber-600 shrink-0" title="Pending deletion request" aria-label="Pending deletion request">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                            </span>
+                          )
+                        )}
+                        <Link href={`/products/${p.id}`} className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 rounded">
+                          {p.name}
+                        </Link>
+                        {showRed && <span className="text-red-600 font-bold ml-0.5" aria-label="Dependent product">*</span>}
+                        {showBlue && <span className="text-blue-600 font-bold ml-0.5" aria-label="Has dependency">*</span>}
+                        {(showRed || showBlue) && depSerials.length > 0 && (
+                          <sup
+                            className="text-slate-500 font-normal ml-0.5 cursor-pointer rounded px-0.5 hover:bg-amber-100 hover:text-amber-800"
+                            title="Dependency row numbers — hover or click to highlight rows"
+                            role="button"
+                            tabIndex={0}
+                            onMouseEnter={() => { setHighlightedSerials(new Set(depSerials)); setSuperscriptPinned(false); }}
+                            onMouseLeave={() => { if (!superscriptPinned) setHighlightedSerials(null); }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const same = highlightedSerials && depSerials.length === highlightedSerials.size && depSerials.every((n) => highlightedSerials.has(n));
+                              if (superscriptPinned && same) {
+                                setHighlightedSerials(null);
+                                setSuperscriptPinned(false);
+                              } else {
+                                setHighlightedSerials(new Set(depSerials));
+                                setSuperscriptPinned(true);
+                              }
+                            }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.target as HTMLElement).click(); } }}
+                          >
+                            ({depSerials.join(', ')})
+                          </sup>
+                        )}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">{p.version || '—'}</td>
                     <td className="px-4 py-3">
-                      {isAdmin && isEditingThisRow ? (
+                      {canEditProduct && isEditingThisRow ? (
                         <select
                           value={normalizeProductStatus(statusDisplay)}
                           onChange={(e) => {
@@ -884,20 +1096,20 @@ function ProductsContent() {
                           }}
                           className="input py-1 text-sm w-auto min-w-[100px]"
                           disabled={applyEditMutation.isPending}
-                          title="Set product status (admin)"
+                          title="Set product status (owner)"
                         >
                           <option value="pending">Pending</option>
                           <option value="approved">Approved</option>
                           <option value="archived">Archived</option>
                         </select>
                       ) : (
-                        <span className="px-2 py-0.5 rounded text-sm bg-gray-100">
+                        <span className="px-2 py-0.5 rounded text-sm bg-dhl-yellow/30 text-slate-800">
                           {productStatusLabel(statusDisplay)}
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {isAdmin && isEditingThisRow ? (
+                      {canEditProduct && isEditingThisRow ? (
                         <select
                           value={lifecycleDisplay}
                           onChange={(e) => {
@@ -909,7 +1121,7 @@ function ProductsContent() {
                           }}
                           className="input py-1 text-sm w-auto min-w-[120px]"
                           disabled={applyEditMutation.isPending}
-                          title="Set lifecycle (admin)"
+                          title="Set lifecycle (owner)"
                         >
                           <option value="active">Active</option>
                           <option value="not_active">Not Active</option>
@@ -941,7 +1153,7 @@ function ProductsContent() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {isAdmin && isEditingThisRow ? (
+                      {canEditProduct && isEditingThisRow ? (
                         <div>
                           <select
                             value={ownerDisplay}
@@ -957,7 +1169,7 @@ function ProductsContent() {
                             }}
                             className="input py-1 text-sm w-auto min-w-[120px]"
                             disabled={applyEditMutation.isPending}
-                            title="Set owner (admin)"
+                            title="Set owner (owner)"
                           >
                             <option value="none">No owner</option>
                             {users.map((u) => (
@@ -971,30 +1183,15 @@ function ProductsContent() {
                         p.owner?.name ?? '—'
                       )}
                     </td>
-                    {isAdmin && (
-                      <td className="px-4 py-3">
-                        {pendingDel ? (
-                          <button
-                            type="button"
-                            onClick={() => openConfirmDeletion(p.id, pendingDel.id, p.name)}
-                            className="text-amber-700 hover:text-amber-800 font-medium text-sm"
-                          >
-                            Confirm Deletion
-                          </button>
-                        ) : (
-                          <span className="text-gray-400 text-sm">—</span>
-                        )}
-                      </td>
-                    )}
-                    {isAdmin && (
-                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <td className={`px-4 py-3 align-middle transition-opacity ${(selectedProductId === p.id || isEditingThisRow) ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'}`} onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
                         {showEditActions && (
                           isEditingThisRow ? (
-                            <div className="flex items-center gap-2">
+                            <>
                               <button
                                 type="button"
                                 onClick={() => handleToggleEditMode(p)}
-                                className="inline-flex items-center gap-1.5 min-h-[2rem] px-2 py-1 rounded-lg text-sm font-medium text-white bg-dhl-red hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red cursor-pointer"
+                                className="inline-flex items-center gap-1.5 min-h-[2rem] px-2 py-1 rounded-lg text-sm font-medium text-white bg-dhl-red hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-yellow cursor-pointer"
                                 title="Save changes"
                                 aria-label="Save"
                               >
@@ -1009,13 +1206,13 @@ function ProductsContent() {
                               >
                                 Cancel
                               </button>
-                            </div>
+                            </>
                           ) : (
                             <button
                               type="button"
                               onClick={() => setEditingProductId(p.id)}
-                              className="p-1.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-400"
-                              title="Edit status, lifecycle, owner"
+                              className="p-1.5 rounded text-dhl-red hover:bg-dhl-yellow/25 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red"
+                              title="Edit status, lifecycle, owner (owner only)"
                               aria-label="Edit"
                             >
                               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1025,16 +1222,24 @@ function ProductsContent() {
                             </button>
                           )
                         )}
-                      </td>
-                    )}
-                    <td className="px-4 py-3">
-                      <Link href={`/products/${p.id}`} className="text-blue-600 hover:underline">
-                        View
-                      </Link>
-                      {' · '}
-                      <Link href={`/roadmap?product=${p.id}`} className="text-blue-600 hover:underline">
-                        Roadmap
-                      </Link>
+                        {canEditProduct ? (
+                          <Link
+                            href={`/products/${p.id}`}
+                            className="inline-flex p-1.5 rounded text-dhl-red hover:bg-dhl-yellow/25 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red"
+                            title="Edit product"
+                            aria-label="Edit product"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                              <path d="m15 5 4 4" />
+                            </svg>
+                          </Link>
+                        ) : (
+                          <Link href={`/products/${p.id}`} className="text-blue-600 hover:underline text-sm">
+                            View
+                          </Link>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

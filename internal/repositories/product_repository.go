@@ -11,9 +11,10 @@ import (
 type ProductRepository interface {
 	Create(product *models.Product) error
 	GetByID(id uuid.UUID) (*models.Product, error)
-	List(ownerID *uuid.UUID, status *models.ProductStatus, lifecycleStatus *models.LifecycleStatus, category1, category2, category3 *string, productIDs *[]uuid.UUID, dateFrom, dateTo *time.Time, sortBy, order string, limit, offset int) ([]models.Product, int64, error)
+	List(ownerID *uuid.UUID, status *models.ProductStatus, lifecycleStatus *models.LifecycleStatus, category1, category2, category3 *string, productIDs *[]uuid.UUID, excludedProductIDs *[]uuid.UUID, dateFrom, dateTo *time.Time, sortBy, order string, limit, offset int) ([]models.Product, int64, error)
 	Update(product *models.Product) error
 	Delete(id uuid.UUID) error
+	ClearOwnerForUser(userID uuid.UUID) error
 }
 
 type productRepository struct {
@@ -37,7 +38,7 @@ func (r *productRepository) GetByID(id uuid.UUID) (*models.Product, error) {
 	return &p, nil
 }
 
-func (r *productRepository) List(ownerID *uuid.UUID, status *models.ProductStatus, lifecycleStatus *models.LifecycleStatus, category1, category2, category3 *string, productIDs *[]uuid.UUID, dateFrom, dateTo *time.Time, sortBy, order string, limit, offset int) ([]models.Product, int64, error) {
+func (r *productRepository) List(ownerID *uuid.UUID, status *models.ProductStatus, lifecycleStatus *models.LifecycleStatus, category1, category2, category3 *string, productIDs *[]uuid.UUID, excludedProductIDs *[]uuid.UUID, dateFrom, dateTo *time.Time, sortBy, order string, limit, offset int) ([]models.Product, int64, error) {
 	var products []models.Product
 	q := r.db.Preload("Owner")
 	if ownerID != nil {
@@ -63,6 +64,9 @@ func (r *productRepository) List(ownerID *uuid.UUID, status *models.ProductStatu
 			return nil, 0, nil
 		}
 		q = q.Where("id IN ?", *productIDs)
+	}
+	if excludedProductIDs != nil && len(*excludedProductIDs) > 0 {
+		q = q.Where("id NOT IN ?", *excludedProductIDs)
 	}
 	if dateFrom != nil {
 		q = q.Where("created_at >= ?", *dateFrom)
@@ -111,4 +115,8 @@ func (r *productRepository) Update(product *models.Product) error {
 
 func (r *productRepository) Delete(id uuid.UUID) error {
 	return r.db.Delete(&models.Product{}, "id = ?", id).Error
+}
+
+func (r *productRepository) ClearOwnerForUser(userID uuid.UUID) error {
+	return r.db.Model(&models.Product{}).Where("owner_id = ?", userID).Update("owner_id", nil).Error
 }

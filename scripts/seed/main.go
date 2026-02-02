@@ -26,6 +26,17 @@ func main() {
 
 	userRepo := repositories.NewUserRepository(db)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+	superadmin := &models.User{
+		Name:         "Superadmin",
+		Email:        "superadmin@example.com",
+		PasswordHash: string(hash),
+		Role:         models.RoleSuperadmin,
+	}
+	if err := userRepo.Create(superadmin); err != nil {
+		log.Printf("superadmin user may already exist: %v", err)
+	} else {
+		log.Printf("created superadmin: %s", superadmin.Email)
+	}
 	admin := &models.User{
 		Name:         "Admin",
 		Email:        "admin@example.com",

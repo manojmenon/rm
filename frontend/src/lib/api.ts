@@ -161,6 +161,19 @@ export type AuditLog = {
   trace_id: string;
 };
 
+export type ActivityLog = {
+  id: string;
+  timestamp: string;
+  user_id?: string;
+  user?: User;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details: string;
+  ip_address: string;
+  user_agent: string;
+};
+
 export type PageResult<T> = {
   items: T[];
   total: number;
@@ -180,9 +193,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    logout: () =>
+      fetchApi<{ message: string }>('/auth/logout', { method: 'POST' }),
   },
   products: {
-    list: (params?: { owner_id?: string; status?: string; lifecycle_status?: string; category_1?: string; category_2?: string; category_3?: string; group_id?: string; date_from?: string; date_to?: string; sort_by?: string; order?: string; limit?: number; offset?: number }) => {
+    list: (params?: { owner_id?: string; status?: string; lifecycle_status?: string; category_1?: string; category_2?: string; category_3?: string; group_id?: string; ungrouped_only?: boolean; date_from?: string; date_to?: string; sort_by?: string; order?: string; limit?: number; offset?: number }) => {
       const p = params ?? {};
       const q = new URLSearchParams();
       if (p.owner_id) q.set('owner_id', p.owner_id);
@@ -192,6 +207,7 @@ export const api = {
       if (p.category_2) q.set('category_2', p.category_2);
       if (p.category_3) q.set('category_3', p.category_3);
       if (p.group_id) q.set('group_id', p.group_id);
+      if (p.ungrouped_only === true) q.set('ungrouped_only', 'true');
       if (p.date_from) q.set('date_from', p.date_from);
       if (p.date_to) q.set('date_to', p.date_to);
       if (p.sort_by) q.set('sort_by', p.sort_by);
@@ -278,6 +294,9 @@ export const api = {
     get: (id: string) => fetchApi<User>(`/users/${id}`),
     update: (id: string, body: { name?: string; role?: string; team_id?: string; direct_manager_id?: string }) =>
       fetchApi<User>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => fetchApi<void>(`/users/${id}`, { method: 'DELETE' }),
+    removeFromProducts: (id: string) =>
+      fetchApi<void>(`/users/${id}/remove-from-products`, { method: 'PUT' }),
     listDottedLineManagers: (id: string) => fetchApi<UserDottedLineManager[]>(`/users/${id}/dotted-line-managers`),
     addDottedLineManager: (id: string, manager_id: string) =>
       fetchApi<UserDottedLineManager>(`/users/${id}/dotted-line-managers`, { method: 'POST', body: JSON.stringify({ manager_id }) }),
@@ -407,5 +426,20 @@ export const api = {
       fetchApi<{ archived: number }>('/audit-logs/archive', { method: 'POST', body: JSON.stringify({ ids }) }),
     deleteArchived: (ids: string[], password: string) =>
       fetchApi<{ deleted: number }>('/audit-logs/archive/delete', { method: 'POST', body: JSON.stringify({ ids, password }) }),
+  },
+  activityLogs: {
+    list: (params?: { limit?: number; offset?: number; action?: string; date_from?: string; date_to?: string; sort_by?: string; order?: string }) => {
+      const p = params ?? {};
+      const q = new URLSearchParams();
+      if (p.limit != null) q.set('limit', String(p.limit));
+      if (p.offset != null) q.set('offset', String(p.offset));
+      if (p.action) q.set('action', p.action);
+      if (p.date_from) q.set('date_from', p.date_from);
+      if (p.date_to) q.set('date_to', p.date_to);
+      if (p.sort_by) q.set('sort_by', p.sort_by);
+      if (p.order) q.set('order', p.order);
+      const s = q.toString();
+      return fetchApi<PageResult<ActivityLog>>(`/activity-logs${s ? `?${s}` : ''}`);
+    },
   },
 };

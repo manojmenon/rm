@@ -22,7 +22,12 @@ export const useAuthStore = create<AuthState>()(
         }
         set({ user, accessToken });
       },
-      logout: () => {
+      logout: async () => {
+        try {
+          await api.auth.logout();
+        } catch {
+          // Ignore; clear client state regardless so user can sign out
+        }
         if (typeof window !== 'undefined') {
           localStorage.removeItem('access_token');
         }

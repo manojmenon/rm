@@ -9,7 +9,7 @@ type RegisterRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=8"`
-	Role     string `json:"role"` // admin/owner/user; default user
+	Role     string `json:"role"` // user | owner | admin | superadmin (superadmin cannot self-register); default user
 }
 
 type AuthResponse struct {

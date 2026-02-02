@@ -25,10 +25,11 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	}
 }
 
+// RequireAdmin allows admin and superadmin (hierarchy: user < owner < admin < superadmin).
 func RequireAdmin() gin.HandlerFunc {
-	return RequireRole("admin")
+	return RequireRole("admin", "superadmin")
 }
 
 func RequireOwnerOrAdmin() gin.HandlerFunc {
-	return RequireRole("admin", "owner")
+	return RequireRole("admin", "owner", "superadmin")
 }

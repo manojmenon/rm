@@ -13,6 +13,7 @@ type GroupRepository interface {
 	Update(group *models.Group) error
 	Delete(id uuid.UUID) error
 	GetProductIDs(groupID uuid.UUID) ([]uuid.UUID, error)
+	GetAllProductIDsInAnyGroup() ([]uuid.UUID, error)
 	SetProducts(groupID uuid.UUID, productIDs []uuid.UUID) error
 }
 
@@ -60,6 +61,12 @@ func (r *groupRepository) Delete(id uuid.UUID) error {
 func (r *groupRepository) GetProductIDs(groupID uuid.UUID) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	err := r.db.Table("group_products").Where("group_id = ?", groupID).Pluck("product_id", &ids).Error
+	return ids, err
+}
+
+func (r *groupRepository) GetAllProductIDsInAnyGroup() ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.Table("group_products").Distinct("product_id").Pluck("product_id", &ids).Error
 	return ids, err
 }
 

@@ -139,7 +139,7 @@ export function AuditLogsContent() {
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = (() => { const r = user?.role?.toLowerCase(); return r === 'admin' || r === 'superadmin'; })();
   const isAuditOnlyPage = pathname === '/audit-logs';
   const [viewMode, setViewMode] = useState<'main' | 'archive'>('main');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -810,7 +810,7 @@ export function AuditLogsContent() {
 export default function AuditLogsPage() {
   return (
     <RequireAuth>
-      <RequireRole allowedRoles={['admin']}>
+      <RequireRole allowedRoles={['admin', 'superadmin']}>
         <AuditLogsContent />
       </RequireRole>
     </RequireAuth>

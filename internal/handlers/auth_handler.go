@@ -4,16 +4,18 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rm/roadmap/internal/dto"
 	"github.com/rm/roadmap/internal/services"
 )
 
 type AuthHandler struct {
-	authService *services.AuthService
+	authService     *services.AuthService
+	activityService *services.ActivityService
 }
 
-func NewAuthHandler(authService *services.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService *services.AuthService, activityService *services.ActivityService) *AuthHandler {
+	return &AuthHandler{authService: authService, activityService: activityService}
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -24,6 +26,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	resp, err := h.authService.Login(req)
 	if err != nil {
+		// Log every failed login attempt for audit
+		details := "error"
+		if err == services.ErrInvalidCredentials {
+			details = "invalid credentials"
+		}
+		h.activityService.Log(c.Request.Context(), services.ActivityEntry{
+			UserID:    nil,
+			Action:    "login_failed",
+			Details:   details,
+			IPAddress: c.ClientIP(),
+			UserAgent: c.Request.UserAgent(),
+		})
 		if err == services.ErrInvalidCredentials {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 			return
@@ -31,6 +45,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	// Log every successful login
+	uid, _ := uuid.Parse(resp.User.ID)
+	h.activityService.Log(c.Request.Context(), services.ActivityEntry{
+		UserID:    &uid,
+		Action:    "login",
+		IPAddress: c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	})
 	c.JSON(http.StatusOK, resp)
 }
 

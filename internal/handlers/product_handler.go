@@ -36,11 +36,11 @@ func (h *ProductHandler) Create(c *gin.Context) {
 	}
 	callerID, callerRole := h.getCaller(c)
 	var ownerID *uuid.UUID
-	if callerRole == models.RoleAdmin || callerRole == models.RoleOwner {
+	if callerRole.IsAdminOrAbove() || callerRole == models.RoleOwner {
 		ownerID = &callerID
 	}
 	meta := middleware.GetAuditMeta(c)
-	resp, err := h.productService.Create(c.Request.Context(), req, ownerID, callerRole == models.RoleAdmin, meta)
+	resp, err := h.productService.Create(c.Request.Context(), req, ownerID, callerRole.IsAdminOrAbove(), meta)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -83,6 +83,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 			groupID = &parsed
 		}
 	}
+	ungroupedOnly := c.Query("ungrouped_only") == "true" || c.Query("ungrouped_only") == "1"
 	var dateFrom, dateTo *time.Time
 	if df := c.Query("date_from"); df != "" {
 		if t, err := time.Parse("2006-01-02", df); err == nil {
@@ -104,7 +105,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 	}
 	pr := dto.PageRequest{Limit: limit, Offset: offset}
 	pr.Normalize(20, 100)
-	result, err := h.productService.List(ownerID, status, lifecycleStatus, category1, category2, category3, groupID, dateFrom, dateTo, sortBy, order, callerID, callerRole, pr.Limit, pr.Offset)
+	result, err := h.productService.List(ownerID, status, lifecycleStatus, category1, category2, category3, groupID, ungroupedOnly, dateFrom, dateTo, sortBy, order, callerID, callerRole, pr.Limit, pr.Offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

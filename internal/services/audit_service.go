@@ -78,7 +78,7 @@ func (s *AuditService) Log(ctx context.Context, entry AuditEntry) {
 // List returns paginated audit logs. For admin: all logs. For others: only logs for products the caller owns.
 // archived: nil or false = main (non-archived), true = archive only.
 func (s *AuditService) List(ctx context.Context, limit, offset int, entityType, action string, dateFrom, dateTo *time.Time, archived *bool, sortBy, order string, callerID uuid.UUID, callerRole string) ([]dto.AuditLogResponse, int64, error) {
-	if strings.ToLower(callerRole) == "admin" {
+	if models.Role(strings.ToLower(callerRole)).IsAdminOrAbove() {
 		list, total, err := s.repo.List(ctx, limit, offset, entityType, action, dateFrom, dateTo, archived, sortBy, order)
 		if err != nil {
 			return nil, 0, err
@@ -91,7 +91,7 @@ func (s *AuditService) List(ctx context.Context, limit, offset int, entityType, 
 		return out, total, nil
 	}
 	// Non-admin: only logs for products they own
-	products, _, err := s.productRepo.List(&callerID, nil, nil, nil, nil, nil, nil, nil, nil, "created_at", "desc", 2000, 0)
+	products, _, err := s.productRepo.List(&callerID, nil, nil, nil, nil, nil, nil, nil, nil, nil, "created_at", "desc", 2000, 0)
 	if err != nil {
 		return nil, 0, err
 	}

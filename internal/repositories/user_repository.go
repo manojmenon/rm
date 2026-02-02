@@ -21,6 +21,7 @@ type UserRepository interface {
 	List(teamID, directManagerID *uuid.UUID) ([]models.User, error)
 	ListByRole(role models.Role) ([]models.User, error)
 	Update(user *models.User) error
+	Delete(id uuid.UUID) error
 	ManagerChainDepth(userID uuid.UUID) (int, error)
 }
 
@@ -75,6 +76,10 @@ func (r *userRepository) ListByRole(role models.Role) ([]models.User, error) {
 
 func (r *userRepository) Update(user *models.User) error {
 	return r.db.Save(user).Error
+}
+
+func (r *userRepository) Delete(id uuid.UUID) error {
+	return r.db.Delete(&models.User{}, "id = ?", id).Error
 }
 
 // ManagerChainDepth returns the number of steps from user up the direct_manager chain (0 = no manager).

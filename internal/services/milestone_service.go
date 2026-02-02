@@ -20,6 +20,7 @@ type MilestoneService struct {
 	productRepo   repositories.ProductRepository
 	depRepo       repositories.DependencyRepository
 	auditSvc      *AuditService
+	activitySvc   *ActivityService
 }
 
 func NewMilestoneService(
@@ -27,12 +28,14 @@ func NewMilestoneService(
 	productRepo repositories.ProductRepository,
 	depRepo repositories.DependencyRepository,
 	auditSvc *AuditService,
+	activitySvc *ActivityService,
 ) *MilestoneService {
 	return &MilestoneService{
 		milestoneRepo: milestoneRepo,
 		productRepo:   productRepo,
 		depRepo:       depRepo,
 		auditSvc:      auditSvc,
+		activitySvc:   activitySvc,
 	}
 }
 
@@ -109,6 +112,17 @@ func (s *MilestoneService) Create(ctx context.Context, req dto.MilestoneCreateRe
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "create",
+			EntityType: "milestone",
+			EntityID:   m.ID.String(),
+			Details:    m.Label,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	return resp, nil
@@ -201,6 +215,17 @@ func (s *MilestoneService) Update(ctx context.Context, id uuid.UUID, req dto.Mil
 			TraceID:    meta.TraceID,
 		})
 	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "save",
+			EntityType: "milestone",
+			EntityID:   id.String(),
+			Details:    m.Label,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
+		})
+	}
 	return newResp, nil
 }
 
@@ -287,6 +312,21 @@ func (s *MilestoneService) Delete(ctx context.Context, id uuid.UUID, callerID uu
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		details := ""
+		if m != nil {
+			details = m.Label
+		}
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "delete",
+			EntityType: "milestone",
+			EntityID:   id.String(),
+			Details:    details,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	return nil

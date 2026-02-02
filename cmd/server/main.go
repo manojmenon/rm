@@ -56,6 +56,7 @@ func main() {
 		&models.Department{},
 		&models.Team{},
 		&models.UserDottedLineManager{},
+		&models.ActivityLog{},
 	); err != nil {
 		logger.Fatal("migrate failed", zap.Error(err))
 	}
@@ -72,6 +73,7 @@ func main() {
 	depRepo := repositories.NewDependencyRepository(db)
 	reqRepo := repositories.NewProductRequestRepository(db)
 	auditRepo := repositories.NewAuditRepository(db)
+	activityRepo := repositories.NewActivityRepository(db)
 	versionRepo := repositories.NewProductVersionRepository(db)
 	deletionReqRepo := repositories.NewProductDeletionRequestRepository(db)
 	groupRepo := repositories.NewGroupRepository(db)
@@ -85,17 +87,18 @@ func main() {
 	dottedLineRepo := repositories.NewUserDottedLineRepository(db)
 
 	auditSvc := services.NewAuditService(auditRepo, productRepo, logger)
+	activitySvc := services.NewActivityService(activityRepo, logger)
 	notificationSvc := services.NewNotificationService(notificationRepo)
 
 	authSvc := services.NewAuthService(userRepo, jwtService)
-	productSvc := services.NewProductService(productRepo, versionRepo, deletionReqRepo, groupRepo, milestoneRepo, auditSvc, notificationSvc)
+	productSvc := services.NewProductService(productRepo, versionRepo, deletionReqRepo, groupRepo, milestoneRepo, auditSvc, activitySvc, notificationSvc)
 	groupSvc := services.NewGroupService(groupRepo)
-	milestoneSvc := services.NewMilestoneService(milestoneRepo, productRepo, depRepo, auditSvc)
-	depSvc := services.NewDependencyService(depRepo, milestoneRepo, auditSvc)
-	reqSvc := services.NewProductRequestService(reqRepo, productRepo, userRepo, auditSvc, notificationSvc)
-	productVersionSvc := services.NewProductVersionService(versionRepo, productRepo, auditSvc)
+	milestoneSvc := services.NewMilestoneService(milestoneRepo, productRepo, depRepo, auditSvc, activitySvc)
+	depSvc := services.NewDependencyService(depRepo, milestoneRepo, auditSvc, activitySvc)
+	reqSvc := services.NewProductRequestService(reqRepo, productRepo, userRepo, auditSvc, activitySvc, notificationSvc)
+	productVersionSvc := services.NewProductVersionService(versionRepo, productRepo, auditSvc, activitySvc)
 	versionDepSvc := services.NewProductVersionDependencyService(versionDepRepo, versionRepo, productRepo, auditSvc)
-	deletionReqSvc := services.NewProductDeletionRequestService(deletionReqRepo, productRepo, versionRepo, userRepo, auditSvc, notificationSvc)
+	deletionReqSvc := services.NewProductDeletionRequestService(deletionReqRepo, productRepo, versionRepo, userRepo, auditSvc, activitySvc, notificationSvc)
 	orgSvc := services.NewOrgService(holdingRepo, companyRepo, funcRepo, deptRepo, teamRepo)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -107,18 +110,19 @@ func main() {
 		defer func() { _ = tp.Shutdown(ctx) }()
 	}
 
-	authHandler := handlers.NewAuthHandler(authSvc)
+	authHandler := handlers.NewAuthHandler(authSvc, activitySvc)
 	productHandler := handlers.NewProductHandler(productSvc)
 	milestoneHandler := handlers.NewMilestoneHandler(milestoneSvc)
 	depHandler := handlers.NewDependencyHandler(depSvc)
 	reqHandler := handlers.NewProductRequestHandler(reqSvc)
-	userHandler := handlers.NewUserHandler(userRepo, dottedLineRepo)
+	userHandler := handlers.NewUserHandler(userRepo, dottedLineRepo, productRepo)
 	orgHandler := handlers.NewOrgHandler(orgSvc)
 	productVersionHandler := handlers.NewProductVersionHandler(productVersionSvc)
 	versionDepHandler := handlers.NewProductVersionDependencyHandler(versionDepSvc)
 	deletionReqHandler := handlers.NewProductDeletionRequestHandler(deletionReqSvc)
 	notificationHandler := handlers.NewNotificationHandler(notificationSvc)
 	auditHandler := handlers.NewAuditHandler(auditSvc, authSvc)
+	activityHandler := handlers.NewActivityHandler(activitySvc)
 	groupHandler := handlers.NewGroupHandler(groupSvc)
 
 	r := gin.New()
@@ -137,6 +141,8 @@ func main() {
 	api.Use(middleware.Auth(jwtService))
 	api.Use(middleware.AuditContext())
 	{
+		api.POST("/auth/logout", activityHandler.Logout)
+
 		api.GET("/products", productHandler.List)
 		api.POST("/products", productHandler.Create)
 		api.GET("/products/:id", productHandler.GetByID)
@@ -176,6 +182,8 @@ func main() {
 		api.GET("/users", middleware.RequireAdmin(), userHandler.List)
 		api.GET("/users/:id", middleware.RequireAdmin(), userHandler.GetByID)
 		api.PUT("/users/:id", middleware.RequireAdmin(), userHandler.Update)
+		api.PUT("/users/:id/remove-from-products", middleware.RequireAdmin(), userHandler.RemoveFromProducts)
+		api.DELETE("/users/:id", middleware.RequireAdmin(), userHandler.Delete)
 		api.GET("/users/:id/dotted-line-managers", middleware.RequireAdmin(), userHandler.ListDottedLineManagers)
 		api.POST("/users/:id/dotted-line-managers", middleware.RequireAdmin(), userHandler.AddDottedLineManager)
 		api.DELETE("/users/:id/dotted-line-managers/:manager_id", middleware.RequireAdmin(), userHandler.RemoveDottedLineManager)
@@ -212,6 +220,7 @@ func main() {
 		api.GET("/audit-logs", auditHandler.List)
 		api.POST("/audit-logs/archive", middleware.RequireAdmin(), auditHandler.Archive)
 		api.POST("/audit-logs/archive/delete", middleware.RequireAdmin(), auditHandler.DeleteArchived)
+		api.GET("/activity-logs", middleware.RequireAdmin(), activityHandler.List)
 
 		api.GET("/groups", groupHandler.List)
 		api.POST("/groups", groupHandler.Create)

@@ -65,6 +65,10 @@ func (s *AuthService) Register(req dto.RegisterRequest) (*dto.AuthResponse, erro
 	if err != nil {
 		return nil, err
 	}
+	// Superadmin cannot be created via self-registration; only via seed or by another superadmin.
+	if req.Role == "superadmin" {
+		return nil, errors.New("cannot self-register as superadmin")
+	}
 	role := models.RoleUser
 	if req.Role == "admin" {
 		role = models.RoleAdmin

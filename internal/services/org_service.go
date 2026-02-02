@@ -276,6 +276,9 @@ func (s *OrgService) UpdateTeam(id uuid.UUID, req dto.TeamUpdateRequest) (*dto.T
 			t.ManagerID = &mid
 		}
 	}
+	// Clear associations so GORM persists department_id and manager_id columns
+	t.Department = nil
+	t.Manager = nil
 	if err := s.teamRepo.Update(t); err != nil {
 		return nil, err
 	}

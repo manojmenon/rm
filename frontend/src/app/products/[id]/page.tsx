@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { RequireAuth } from '@/components/RequireAuth';
 import { MilestoneEditor } from '@/components/MilestoneEditor';
-import { api } from '@/lib/api';
+import { ProductGanttChart, getVersionSectionBg } from '@/components/RoadmapView';
+import { api, type Dependency, type Milestone, type ProductVersionDependency } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 
 const LIFECYCLE_LABELS: Record<string, string> = {
@@ -118,17 +119,57 @@ function ProductDetailContent() {
     staleTime: 0,
   });
 
+  const [versionDepsRevealCount, setVersionDepsRevealCount] = useState(10);
+  const versionsLength = (versions ?? []).length;
+  useEffect(() => {
+    if (versionsLength === 0) return;
+    setVersionDepsRevealCount(10);
+    const t = setTimeout(() => setVersionDepsRevealCount(versionsLength), 1000);
+    return () => clearTimeout(t);
+  }, [versionsLength]);
+
   const versionDepsQueries = useQueries({
-    queries: (versions ?? []).map((v) => ({
+    queries: (versions ?? []).map((v, index) => ({
       queryKey: ['version-dependencies', v.id],
       queryFn: () => api.productVersionDependencies.listByProductVersion(v.id),
-      enabled: !!v.id,
+      enabled: !!v.id && index < versionDepsRevealCount,
     })),
   });
   const versionDepsByVersionId: Record<string, ProductVersionDependency[]> = {};
   versions.forEach((v, idx) => {
     const data = versionDepsQueries[idx]?.data;
     if (data) versionDepsByVersionId[v.id] = data;
+  });
+
+  const allVersionDeps = useMemo(
+    () => Object.values(versionDepsByVersionId).flat(),
+    [versionDepsByVersionId]
+  );
+  const targetProductIds = useMemo(
+    () => [...new Set(allVersionDeps.map((d) => d.target_product_id))],
+    [allVersionDeps]
+  );
+
+  const depProductQueries = useQueries({
+    queries: targetProductIds.map((tid) => ({
+      queryKey: ['product', tid],
+      queryFn: () => api.products.get(tid),
+      enabled: !!tid,
+    })),
+  });
+  const depVersionsQueries = useQueries({
+    queries: targetProductIds.map((tid) => ({
+      queryKey: ['product-versions', tid],
+      queryFn: () => api.productVersions.listByProduct(tid),
+      enabled: !!tid,
+    })),
+  });
+  const depMilestonesQueries = useQueries({
+    queries: targetProductIds.map((tid) => ({
+      queryKey: ['milestones', tid],
+      queryFn: () => api.milestones.listByProduct(tid),
+      enabled: !!tid,
+    })),
   });
 
   const { data: allProducts = [] } = useQuery({
@@ -511,6 +552,109 @@ function ProductDetailContent() {
         </div>
       )}
 
+      {/* Gantt chart — after Categories, before Product versions; includes dependent products and dependency lines */}
+      <div className="card mb-6">
+        <h3 className="font-semibold mb-3">Gantt chart</h3>
+        <p className="text-sm text-slate-500 mb-4">Timeline of product-level and version milestones. Products this one depends on are shown with dependency lines.</p>
+        {(() => {
+          const byVersion = new Map<string | 'product', Milestone[]>();
+          milestones.forEach((m: Milestone) => {
+            const key = (m as Milestone & { product_version_id?: string }).product_version_id ?? 'product';
+            if (!byVersion.has(key)) byVersion.set(key, []);
+            byVersion.get(key)!.push(m);
+          });
+          const sections: Array<{ key: string; title: string; milestones: Milestone[] }> = [];
+          if (byVersion.has('product')) {
+            sections.push({ key: 'product', title: 'Product-level', milestones: byVersion.get('product')! });
+          }
+          versions.forEach((v: { id: string; version: string }) => {
+            if (byVersion.has(v.id)) {
+              sections.push({ key: v.id, title: `Version ${v.version}`, milestones: byVersion.get(v.id)! });
+            }
+          });
+
+          const depProductByTid = new Map<string, { name: string }>();
+          const depVersionsByTid = new Map<string, Array<{ id: string; version: string }>>();
+          const depMilestonesByTid = new Map<string, Milestone[]>();
+          targetProductIds.forEach((tid, idx) => {
+            const p = depProductQueries[idx]?.data;
+            const vers = depVersionsQueries[idx]?.data ?? [];
+            const mils = depMilestonesQueries[idx]?.data ?? [];
+            if (p) depProductByTid.set(tid, { name: p.name });
+            depVersionsByTid.set(tid, vers);
+            depMilestonesByTid.set(tid, mils as Milestone[]);
+          });
+
+          const seenDepSectionKeys = new Set<string>();
+          allVersionDeps.forEach((d) => {
+            const sectionKey = `dep-${d.target_product_id}-${d.target_product_version_id ?? 'product'}`;
+            if (seenDepSectionKeys.has(sectionKey)) return;
+            seenDepSectionKeys.add(sectionKey);
+            const prod = depProductByTid.get(d.target_product_id);
+            const depVersions = depVersionsByTid.get(d.target_product_id) ?? [];
+            const depMils = depMilestonesByTid.get(d.target_product_id) ?? [];
+            const title =
+              d.target_product_version_id != null
+                ? `${prod?.name ?? d.target_product_id} (v${depVersions.find((v) => v.id === d.target_product_version_id)?.version ?? d.target_product_version_id})`
+                : `${prod?.name ?? d.target_product_id} (product-level)`;
+            const depSectionMilestones =
+              d.target_product_version_id != null
+                ? depMils.filter((m) => (m as Milestone & { product_version_id?: string }).product_version_id === d.target_product_version_id)
+                : depMils.filter((m) => (m as Milestone & { product_version_id?: string }).product_version_id == null || (m as Milestone & { product_version_id?: string }).product_version_id === '');
+            if (depSectionMilestones.length > 0) {
+              sections.push({ key: sectionKey, title, milestones: depSectionMilestones, isDependent: true });
+            }
+          });
+
+          const ganttDeps: Dependency[] = [];
+          allVersionDeps.forEach((d) => {
+            const depMils = depMilestonesByTid.get(d.target_product_id) ?? [];
+            const requiredLabel = (d.required_status ?? '').trim();
+            const targetM =
+              d.target_product_version_id != null
+                ? depMils.find(
+                    (m) =>
+                      (m as Milestone & { product_version_id?: string }).product_version_id === d.target_product_version_id &&
+                      (m.label ?? '').trim() === requiredLabel
+                  )
+                : depMils.find(
+                    (m) =>
+                      ((m as Milestone & { product_version_id?: string }).product_version_id == null ||
+                        (m as Milestone & { product_version_id?: string }).product_version_id === '') &&
+                      (m.label ?? '').trim() === requiredLabel
+                  );
+            if (!targetM) return;
+            const ourVersionMils = (byVersion.get(d.source_product_version_id) ?? []).slice().sort(
+              (a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
+            );
+            const ourFirst = ourVersionMils[0];
+            if (!ourFirst) return;
+            ganttDeps.push({
+              id: `vdep-${d.id}`,
+              source_milestone_id: targetM.id,
+              target_milestone_id: ourFirst.id,
+              type: 'version_dependency',
+              created_at: '',
+            });
+          });
+
+          if (sections.length === 0) {
+            return (
+              <p className="text-gray-500 text-sm">
+                No milestones yet. Add product-level or version milestones in the Milestones section below to see them here.
+              </p>
+            );
+          }
+          return (
+            <ProductGanttChart
+              sections={sections}
+              getVersionSectionBg={getVersionSectionBg}
+              dependencies={ganttDeps}
+            />
+          );
+        })()}
+      </div>
+
       {/* Product versions */}
       <div className="card mb-6">
         <div className="flex justify-between items-center mb-4">
@@ -607,7 +751,7 @@ function ProductDetailContent() {
                             setEditingVersionId(v.id);
                             setEditingVersionValue(v.version);
                           }}
-                          className="text-indigo-600 hover:text-indigo-700 p-1 rounded hover:bg-indigo-50"
+                          className="text-dhl-red p-1 rounded hover:bg-dhl-yellow/25 focus:outline-none focus:ring-2 focus:ring-dhl-red focus:ring-offset-1"
                           aria-label="Edit version"
                           title="Edit version"
                         >
@@ -1046,7 +1190,7 @@ function MilestonesList({
                         <button
                           type="button"
                           onClick={() => setEditingMilestoneId(m.id)}
-                          className="text-indigo-600 hover:text-indigo-700 p-1 rounded hover:bg-indigo-50"
+                          className="text-dhl-red p-1 rounded hover:bg-dhl-yellow/25 focus:outline-none focus:ring-2 focus:ring-dhl-red focus:ring-offset-1"
                           aria-label="Edit milestone"
                           title="Edit milestone"
                         >

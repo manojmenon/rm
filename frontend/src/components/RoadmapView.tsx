@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Fragment, useMemo, useEffect } from 'react';
 import Link from 'next/link';
-import { useQuery, useQueries } from '@tanstack/react-query';
-import { api, type Dependency, type Milestone, type Product, type ProductVersion } from '@/lib/api';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api, type Dependency, type Milestone, type Product, type ProductVersion, type ProductVersionDependency } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 
 export type RoadmapFilters = {
@@ -14,6 +14,10 @@ export type RoadmapFilters = {
   category_2?: string;
   category_3?: string;
   group_id?: string;
+  ungrouped_only?: boolean;
+  product_name?: string;
+  date_from?: string;
+  date_to?: string;
 };
 
 type RoadmapViewProps = {
@@ -38,18 +42,13 @@ function canEditProduct(
   return ownerId.toLowerCase() === userId.toLowerCase();
 }
 
-/** Show "Edit roadmap" for product owner or admin whenever they own/have access (no lifecycle check on roadmap). */
+/** Only superadmin can edit roadmap; all others (admin, owner) can only view. */
 function canEditRoadmap(
-  product: { owner_id?: string | null; owner?: { id?: string } },
+  _product: { owner_id?: string | null; owner?: { id?: string } },
   user: { id: string; role: string } | null
 ) {
   if (!user) return false;
-  const isAdmin = (user.role ?? '').toLowerCase() === 'admin';
-  if (isAdmin) return true;
-  const ownerId = (product.owner_id ?? product.owner?.id ?? '').toString().trim();
-  const userId = (user.id ?? '').toString().trim();
-  if (!ownerId || !userId) return false;
-  return ownerId.toLowerCase() === userId.toLowerCase();
+  return (user.role ?? '').toLowerCase() === 'superadmin';
 }
 
 function formatDate(s: string) {
@@ -89,7 +88,7 @@ const VERSION_SECTION_BORDERS = [
   'border-l-fuchsia-400',
 ] as const;
 
-function getVersionSectionBg(index: number): string {
+export function getVersionSectionBg(index: number): string {
   return VERSION_SECTION_BGS[index % VERSION_SECTION_BGS.length];
 }
 
@@ -99,24 +98,59 @@ function getVersionSectionBorder(index: number): string {
 
 const BAR_HEIGHT = 28;
 const ROW_GAP = 8;
+const SERIAL_WIDTH = 32;
 const LABEL_WIDTH = 200;
 const ROW_HEIGHT = BAR_HEIGHT + ROW_GAP;
+/** Height of the visual separator (two lines + padding) shown before dependent sections. */
+const DEPENDENT_SEPARATOR_HEIGHT = 52;
 
 /** Position of a milestone bar for dependency lines (percent 0–100, section index). */
 type MilestonePos = { sectionIndex: number; leftPct: number; rightPct: number };
 
 /** Gantt chart: one row per version, every milestone with full text; optional dependency lines (including across products/versions). Click a bar to show milestone details. */
-function ProductGanttChart({
+export function ProductGanttChart({
   sections,
   getVersionSectionBg,
   dependencies = [],
+  onEditProductName,
+  showVersionsForProduct,
+  onToggleProductVersions,
 }: {
-  sections: Array<{ key: string; title: string; milestones: Milestone[] }>;
+  sections: Array<{
+    key: string;
+    title: string;
+    milestones: Milestone[];
+    isDependent?: boolean;
+    showRedAsterisk?: boolean;
+    showBlueAsterisk?: boolean;
+    productId?: string;
+    canEditProductName?: boolean;
+    /** Serial numbers of dependency rows (e.g. [2, 5]) for superscript when asterisk is shown. */
+    dependencySerialNumbers?: number[];
+    /** Indentation level for the label (0 = product name, 1 = version/product-level). */
+    indentationLevel?: number;
+  }>;
   getVersionSectionBg: (index: number) => string;
   dependencies?: Dependency[];
+  onEditProductName?: (productId: string) => void;
+  /** When provided, per-product show/hide versions can be toggled via + next to product name. */
+  showVersionsForProduct?: (productId: string) => boolean;
+  onToggleProductVersions?: (productId: string) => void;
 }) {
   const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(null);
+  const [highlightedSerials, setHighlightedSerials] = useState<Set<number> | null>(null);
+  const [superscriptPinned, setSuperscriptPinned] = useState(false);
+  const [activeYear, setActiveYear] = useState<number | null>(null);
+  const [activeYearPinned, setActiveYearPinned] = useState(false);
+
   const allMilestones = sections.flatMap((s) => s.milestones);
+
+  const sectionHasMilestoneInYear = (section: { milestones: Milestone[] }, year: number): boolean =>
+    section.milestones.some((m) => {
+      const startYear = new Date(m.start_date).getFullYear();
+      const endYear = m.end_date ? new Date(m.end_date).getFullYear() : startYear;
+      return year >= startYear && year <= endYear;
+    });
   if (allMilestones.length === 0) return null;
 
   const allStarts = allMilestones.map((m) => new Date(m.start_date).getTime());
@@ -126,17 +160,21 @@ function ProductGanttChart({
   const minTime = Math.min(...allStarts);
   const maxTime = Math.max(...allEnds);
   const padding = (maxTime - minTime) * 0.05 || 30 * 24 * 60 * 60 * 1000;
-  const rangeStart = minTime - padding;
+  // Start the chart at January 1 of the lowest year among all start dates
+  const minYear = new Date(minTime).getFullYear();
+  const rangeStart = new Date(minYear, 0, 1).getTime();
   const rangeEnd = maxTime + padding;
   const rangeTotal = rangeEnd - rangeStart;
 
-  const yearLabels: Array<{ t: number; label: string }> = [];
-  const startYear = new Date(rangeStart).getFullYear();
+  const yearLabels: Array<{ t: number; label: string; year: number }> = [];
+  // Show year at the very start of the chart (left edge)
+  yearLabels.push({ t: rangeStart, label: String(minYear), year: minYear });
+  const startYear = minYear;
   const endYear = new Date(rangeEnd).getFullYear();
   for (let y = startYear; y <= endYear; y++) {
     const jan1 = new Date(y, 0, 1).getTime();
-    if (jan1 >= rangeStart && jan1 <= rangeEnd) {
-      yearLabels.push({ t: jan1, label: String(y) });
+    if (jan1 > rangeStart && jan1 <= rangeEnd) {
+      yearLabels.push({ t: jan1, label: String(y), year: y });
     }
   }
 
@@ -155,94 +193,267 @@ function ProductGanttChart({
     (d) => milestonePos.has(d.source_milestone_id) && milestonePos.has(d.target_milestone_id)
   );
 
+  const firstDependentIndex = sections.findIndex((s) => s.isDependent);
+  const hasSeparator = firstDependentIndex >= 0;
+  const rowTops: number[] = [];
+  for (let i = 0; i < sections.length; i++) {
+    if (!hasSeparator || i < firstDependentIndex) {
+      rowTops[i] = i * ROW_HEIGHT;
+    } else {
+      rowTops[i] =
+        firstDependentIndex * ROW_HEIGHT +
+        DEPENDENT_SEPARATOR_HEIGHT +
+        (i - firstDependentIndex) * ROW_HEIGHT;
+    }
+  }
+  const totalContentHeight = hasSeparator
+    ? rowTops[rowTops.length - 1]! + ROW_HEIGHT
+    : sections.length * ROW_HEIGHT;
+
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[600px]">
-        {/* Time axis */}
-        <div className="flex border-b border-slate-200" style={{ marginLeft: LABEL_WIDTH }}>
-          <div className="flex-1 relative h-8">
-            {yearLabels.map(({ t, label }) => {
+        {/* Time axis: serial #, label column, then year labels */}
+        <div className="flex border-b border-slate-200">
+          <div
+            className="shrink-0 border-r border-slate-200 flex items-center justify-center text-xs font-medium text-slate-500"
+            style={{ width: SERIAL_WIDTH }}
+          >
+            #
+          </div>
+          <div className="shrink-0" style={{ width: LABEL_WIDTH }} aria-hidden />
+          <div className="flex-1 relative h-8 min-w-[400px]">
+            {yearLabels.map(({ t, label, year }, i) => {
               const x = ((t - rangeStart) / rangeTotal) * 100;
+              const isStart = i === 0;
+              const isActive = activeYear === year;
               return (
-                <div
+                <button
                   key={t}
-                  className="absolute text-xs text-slate-500 -translate-x-1/2"
-                  style={{ left: `${x}%`, top: 4 }}
+                  type="button"
+                  className={`absolute text-xs rounded px-1 py-0.5 cursor-pointer transition-colors ${isStart ? '' : '-translate-x-1/2'} ${
+                    isActive ? 'bg-indigo-100 text-indigo-700 font-semibold' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                  }`}
+                  style={{ left: isStart ? 0 : `${x}%`, top: 4, paddingLeft: isStart ? 2 : 0 }}
+                  title={`Show only rows with milestones in ${year}`}
+                  onMouseEnter={() => {
+                    setActiveYear(year);
+                    setActiveYearPinned(false);
+                  }}
+                  onMouseLeave={() => {
+                    if (!activeYearPinned) setActiveYear(null);
+                  }}
+                  onClick={() => {
+                    const next = activeYear === year ? null : year;
+                    setActiveYear(next);
+                    setActiveYearPinned(next !== null);
+                  }}
                 >
                   {label}
-                </div>
+                </button>
               );
             })}
           </div>
         </div>
         {/* Rows wrapper for SVG overlay */}
-        <div className="relative">
-          {/* One row per version — every milestone with full text */}
+        <div className="relative" style={{ minHeight: totalContentHeight }}>
+          {/* One row per version — every milestone with full text; separator before first dependent section */}
           {sections.map((section, index) => (
-            <div
-              key={section.key}
-              className={`flex items-stretch border-b border-slate-100 ${getVersionSectionBg(index)}`}
-              style={{ minHeight: ROW_HEIGHT }}
-            >
+            <Fragment key={section.key}>
+              {index === firstDependentIndex && (
+                <div
+                  key={`separator-${section.key}`}
+                  className="flex items-stretch border-0 border-t-2 border-b-2 border-slate-300 bg-slate-100/80"
+                  style={{ height: DEPENDENT_SEPARATOR_HEIGHT }}
+                  aria-hidden
+                >
+                  <div className="shrink-0 border-r border-slate-200" style={{ width: SERIAL_WIDTH }} />
+                  <div className="shrink-0 border-r border-slate-200" style={{ width: LABEL_WIDTH }} />
+                  <div className="flex-1 flex items-center justify-center">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Dependent products &amp; versions
+                    </span>
+                  </div>
+                </div>
+              )}
               <div
-                className={`shrink-0 py-2 px-3 text-sm border-r border-slate-200 ${
-                  section.milestones.length === 0 ? 'font-bold text-slate-800' : 'font-medium text-slate-700'
+                key={section.key}
+                className={`flex items-stretch border-b border-slate-100 ${getVersionSectionBg(index)} ${
+                  section.productId != null && section.indentationLevel === 0 ? 'group/row' : ''
+                } ${
+                  highlightedSerials?.has(index + 1) ? 'ring-2 ring-amber-400 ring-inset bg-amber-50/70' : ''
+                } ${
+                  activeYear != null && !sectionHasMilestoneInYear(section, activeYear)
+                    ? 'opacity-40 pointer-events-none'
+                    : ''
                 }`}
-                style={{ width: LABEL_WIDTH }}
+                style={{ minHeight: ROW_HEIGHT }}
               >
-                {section.title}
-              </div>
-              <div className="flex-1 relative py-2 px-1" style={{ minWidth: 400 }}>
-                {section.milestones.map((m) => {
-                  const start = new Date(m.start_date).getTime();
-                  const end = m.end_date ? new Date(m.end_date).getTime() : start;
-                  const left = ((start - rangeStart) / rangeTotal) * 100;
-                  const width = (Math.max(end - start, 0) / rangeTotal) * 100;
-                  const color = m.color || '#6366f1';
-                  const noEndDate = !m.end_date;
-                  const isSelected = selectedMilestone?.id === m.id;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => setSelectedMilestone((prev) => (prev?.id === m.id ? null : m))}
-                      className={`absolute flex items-center justify-center rounded-md shadow-sm border cursor-pointer transition-all hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 ${isSelected ? 'ring-2 ring-offset-1 ring-indigo-500' : 'border-white/80'}`}
-                      style={{
-                        left: `${left}%`,
-                        width: `${Math.max(width, 2)}%`,
-                        minWidth: 90,
-                        top: ROW_GAP / 2,
-                        height: BAR_HEIGHT,
-                        backgroundColor: noEndDate ? 'transparent' : color,
-                        borderColor: noEndDate ? '#cbd5e1' : undefined,
-                      }}
-                      title={noEndDate ? `${m.label}: ${formatDate(m.start_date)} (no end date). Click for details.` : `${m.label}: ${formatDate(m.start_date)} – ${formatDate(m.end_date!)}. Click for details.`}
+                <div
+                  className="shrink-0 py-2 px-1 text-sm border-r border-slate-200 flex items-center justify-center font-medium text-slate-600"
+                  style={{ width: SERIAL_WIDTH }}
+                  aria-label={`Row ${index + 1}`}
+                >
+                  {index + 1}
+                </div>
+                <div
+                  className={`group shrink-0 py-2 px-3 text-sm border-r border-slate-200 flex items-center gap-0.5 ${
+                    section.isDependent
+                      ? 'font-bold italic text-red-600'
+                      : section.milestones.length === 0
+                        ? 'font-bold text-slate-800'
+                        : 'font-medium text-slate-700'
+                  }`}
+                  style={{ width: LABEL_WIDTH, paddingLeft: 12 + (section.indentationLevel ?? 0) * 16 }}
+                >
+                  {section.productId ? (
+                    <Link
+                      href={`/products/${section.productId}`}
+                      className="text-indigo-600 hover:text-indigo-700 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 rounded"
+                      title="View product"
                     >
-                      <span className={`text-xs font-medium leading-relaxed whitespace-nowrap overflow-visible px-1 text-center ${noEndDate ? 'text-black' : 'text-white'}`}>
-                        {m.label}
-                      </span>
+                      {section.title}
+                    </Link>
+                  ) : (
+                    <span>{section.title}</span>
+                  )}
+                  {section.indentationLevel === 0 && section.productId && onToggleProductVersions && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onToggleProductVersions(section.productId!);
+                      }}
+                      className="ml-2 w-7 h-7 flex items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 shadow-sm transition-all hover:bg-indigo-100 hover:border-indigo-300 hover:text-indigo-700 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 opacity-60 group-hover/row:opacity-100 group-hover/row:bg-indigo-50 group-hover/row:border-indigo-300 group-hover/row:shadow group-focus-within/row:opacity-100 shrink-0"
+                      aria-label={showVersionsForProduct?.(section.productId) ? 'Hide versions for this product' : 'Show versions for this product'}
+                      title={showVersionsForProduct?.(section.productId) ? 'Hide versions' : 'Show versions'}
+                    >
+                      {showVersionsForProduct?.(section.productId) ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      )}
                     </button>
-                  );
-                })}
+                  )}
+                  {section.showRedAsterisk && (
+                    <span className="text-red-600 font-bold" aria-label="Dependent product">*</span>
+                  )}
+                  {section.showBlueAsterisk && (
+                    <span className="text-blue-600 font-bold" aria-label="Has dependency">*</span>
+                  )}
+                  {(section.showRedAsterisk || section.showBlueAsterisk) &&
+                    section.dependencySerialNumbers &&
+                    section.dependencySerialNumbers.length > 0 && (
+                    <sup
+                      className="text-slate-500 font-normal ml-0.5 cursor-pointer rounded px-0.5 hover:bg-amber-100 hover:text-amber-800"
+                      title="Dependency row numbers — hover or click to highlight rows"
+                      role="button"
+                      tabIndex={0}
+                      onMouseEnter={() => {
+                        setHighlightedSerials(new Set(section.dependencySerialNumbers));
+                        setSuperscriptPinned(false);
+                      }}
+                      onMouseLeave={() => {
+                        if (!superscriptPinned) setHighlightedSerials(null);
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const serials = new Set(section.dependencySerialNumbers);
+                        const same = highlightedSerials && serials.size === highlightedSerials.size && [...serials].every((n) => highlightedSerials.has(n));
+                        if (superscriptPinned && same) {
+                          setHighlightedSerials(null);
+                          setSuperscriptPinned(false);
+                        } else {
+                          setHighlightedSerials(serials);
+                          setSuperscriptPinned(true);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          (e.target as HTMLElement).click();
+                        }
+                      }}
+                    >
+                      ({section.dependencySerialNumbers.join(', ')})
+                    </sup>
+                  )}
+                  {section.productId && section.canEditProductName && onEditProductName && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditProductName(section.productId!);
+                      }}
+                      className="ml-1 p-1 rounded text-dhl-red hover:bg-dhl-yellow/25 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-dhl-red focus:ring-offset-1 opacity-0 transition-opacity group-hover:opacity-100"
+                      aria-label="Edit product name"
+                      title="Edit product name"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                        <path d="m15 5 4 4" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 relative py-2 px-1" style={{ minWidth: 400 }}>
+                  {section.milestones.map((m) => {
+                    const start = new Date(m.start_date).getTime();
+                    const end = m.end_date ? new Date(m.end_date).getTime() : start;
+                    const left = ((start - rangeStart) / rangeTotal) * 100;
+                    const width = (Math.max(end - start, 0) / rangeTotal) * 100;
+                    const color = m.color || '#6366f1';
+                    const noEndDate = !m.end_date;
+                    const isSelected = selectedMilestone?.id === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setSelectedMilestone((prev) => (prev?.id === m.id ? null : m))}
+                        className={`absolute flex items-center justify-center rounded-md shadow-sm border cursor-pointer transition-all hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 ${isSelected ? 'ring-2 ring-offset-1 ring-indigo-500' : 'border-white/80'}`}
+                        style={{
+                          left: `${left}%`,
+                          width: `${Math.max(width, 2)}%`,
+                          minWidth: 90,
+                          top: ROW_GAP / 2,
+                          height: BAR_HEIGHT,
+                          backgroundColor: noEndDate ? 'transparent' : color,
+                          borderColor: noEndDate ? '#cbd5e1' : undefined,
+                        }}
+                        title={noEndDate ? `${m.label}: ${formatDate(m.start_date)} (no end date). Click for details.` : `${m.label}: ${formatDate(m.start_date)} – ${formatDate(m.end_date!)}. Click for details.`}
+                      >
+                        <span className={`text-xs font-medium leading-relaxed whitespace-nowrap overflow-visible px-1 text-center ${noEndDate ? 'text-black' : 'text-white'}`}>
+                          {m.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            </Fragment>
           ))}
           {/* Dependency lines overlay (only when both source and target are in this chart) */}
           {drawableDeps.length > 0 && (
             <svg
               className="absolute top-0 pointer-events-none"
-              style={{ left: LABEL_WIDTH, right: 0, height: sections.length * ROW_HEIGHT }}
-              viewBox={`0 0 100 ${sections.length * ROW_HEIGHT}`}
+              style={{ left: SERIAL_WIDTH + LABEL_WIDTH, right: 0, height: totalContentHeight }}
+              viewBox={`0 0 100 ${totalContentHeight}`}
               preserveAspectRatio="none"
             >
               {drawableDeps.map((dep) => {
                 const src = milestonePos.get(dep.source_milestone_id)!;
                 const tgt = milestonePos.get(dep.target_milestone_id)!;
-                const rowH = ROW_HEIGHT;
                 const srcX = src.rightPct;
-                const srcY = src.sectionIndex * rowH + rowH / 2;
+                const srcY = rowTops[src.sectionIndex]! + ROW_HEIGHT / 2;
                 const tgtX = tgt.leftPct;
-                const tgtY = tgt.sectionIndex * rowH + rowH / 2;
+                const tgtY = rowTops[tgt.sectionIndex]! + ROW_HEIGHT / 2;
                 const midX = (srcX + tgtX) / 2;
                 const path = `M ${srcX} ${srcY} L ${midX} ${srcY} L ${midX} ${tgtY} L ${tgtX} ${tgtY}`;
                 return (
@@ -337,6 +548,32 @@ function MilestoneDetailModal({
 
 export function RoadmapView({ productId, filters }: RoadmapViewProps) {
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [editingProductName, setEditingProductName] = useState('');
+  const [showVersionsInGantt, setShowVersionsInGantt] = useState(true);
+  const [productVersionOverride, setProductVersionOverride] = useState<Record<string, boolean>>({});
+
+  const showVersionsForProduct = useMemo(
+    () => (productId: string) => productVersionOverride[productId] ?? showVersionsInGantt,
+    [showVersionsInGantt, productVersionOverride]
+  );
+  const toggleProductVersions = (productId: string) => {
+    setProductVersionOverride((prev) => ({ ...prev, [productId]: !showVersionsForProduct(productId) }));
+  };
+
+  const updateProductNameMutation = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.products.update(id, { name }),
+    onSuccess: (_, variables) => {
+      queryClient.setQueryData(['product', variables.id], (old: Product | undefined) =>
+        old ? { ...old, name: variables.name } : old
+      );
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setEditingProductId(null);
+      setEditingProductName('');
+    },
+  });
+
   const listParams = {
     limit: 100,
     offset: 0,
@@ -347,6 +584,9 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
     ...(filters?.category_2 && { category_2: filters.category_2 }),
     ...(filters?.category_3 && { category_3: filters.category_3 }),
     ...(filters?.group_id && { group_id: filters.group_id }),
+    ...(filters?.ungrouped_only === true && { ungrouped_only: true }),
+    ...(filters?.date_from && { date_from: filters.date_from }),
+    ...(filters?.date_to && { date_to: filters.date_to }),
   };
   const { data: productsResult } = useQuery({
     queryKey: ['products', listParams],
@@ -354,7 +594,13 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
     staleTime: 0,
     refetchOnMount: 'always',
   });
-  const products = productsResult?.items ?? [];
+  const fetchedProducts = productsResult?.items ?? [];
+  const products =
+    filters?.product_name?.trim()
+      ? fetchedProducts.filter((p) =>
+          p.name.toLowerCase().includes(filters.product_name!.trim().toLowerCase())
+        )
+      : fetchedProducts;
 
   const productIds = productId ? [productId] : products.map((p) => p.id);
   const hasAny = productIds.length > 0;
@@ -383,7 +629,78 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
       : [],
   });
 
-  const unifiedSections: Array<{ key: string; title: string; milestones: Milestone[] }> = [];
+  const versionEntries = useMemo(
+    () =>
+      productIds.flatMap((id, i) =>
+        (versionsQueries[i]?.data ?? []).map((v) => ({ productId: id, versionId: v.id }))
+      ),
+    [productIds, versionsQueries]
+  );
+
+  const [versionDepsRevealCount, setVersionDepsRevealCount] = useState(15);
+  const versionEntriesLength = versionEntries.length;
+  useEffect(() => {
+    if (!showUnifiedGantt || versionEntriesLength === 0) return;
+    setVersionDepsRevealCount(15);
+    const t = setTimeout(() => setVersionDepsRevealCount(versionEntriesLength), 1200);
+    return () => clearTimeout(t);
+  }, [showUnifiedGantt, versionEntriesLength]);
+
+  const versionDepsQueries = useQueries({
+    queries: versionEntries.map((ve, index) => ({
+      queryKey: ['version-dependencies', ve.versionId],
+      queryFn: () => api.productVersionDependencies.listByProductVersion(ve.versionId),
+      enabled: !!ve.versionId && showUnifiedGantt && index < versionDepsRevealCount,
+    })),
+  });
+
+  const versionDepsData = versionDepsQueries.map((q) => q.data);
+  const { hasDependencySectionKeys, isDependentTargetSectionKeys, blueDeps, redDeps } = useMemo(() => {
+    const allVersionDeps = versionEntries.flatMap((ve, idx) =>
+      (versionDepsData[idx] ?? []).map((d: ProductVersionDependency) => ({
+        ...d,
+        sourceProductId: ve.productId,
+        sourceVersionId: ve.versionId,
+      }))
+    );
+    const hasDep = new Set(
+      allVersionDeps.map(
+        (d) =>
+          `${(d as { sourceProductId: string }).sourceProductId}-${(d as { sourceVersionId: string }).sourceVersionId}`
+      )
+    );
+    const isTarget = new Set(
+      allVersionDeps.map((d) => `${d.target_product_id}-${d.target_product_version_id ?? 'product'}`)
+    );
+    const blue: Map<string, string[]> = new Map();
+    const red: Map<string, string[]> = new Map();
+    allVersionDeps.forEach((d) => {
+      const srcKey = `${(d as { sourceProductId: string }).sourceProductId}-${(d as { sourceVersionId: string }).sourceVersionId}`;
+      const tgtKey = `${d.target_product_id}-${d.target_product_version_id ?? 'product'}`;
+      if (!blue.has(srcKey)) blue.set(srcKey, []);
+      blue.get(srcKey)!.push(tgtKey);
+      if (!red.has(tgtKey)) red.set(tgtKey, []);
+      red.get(tgtKey)!.push(srcKey);
+    });
+    return {
+      hasDependencySectionKeys: hasDep,
+      isDependentTargetSectionKeys: isTarget,
+      blueDeps: blue,
+      redDeps: red,
+    };
+  }, [versionEntries, versionDepsData]);
+
+  const unifiedSections: Array<{
+    key: string;
+    title: string;
+    milestones: Milestone[];
+    showRedAsterisk?: boolean;
+    showBlueAsterisk?: boolean;
+    productId?: string;
+    canEditProductName?: boolean;
+    dependencySerialNumbers?: number[];
+    indentationLevel?: number;
+  }> = [];
   if (showUnifiedGantt) {
     productIds.forEach((id, idx) => {
       const product = products.find((p) => p.id === id);
@@ -396,31 +713,70 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
         if (!byVersion.has(key)) byVersion.set(key, []);
         byVersion.get(key)!.push(m);
       });
-      // Product name on its own line
+      // Product name on its own line (owner or admin can edit name via pen icon)
       unifiedSections.push({
         key: `${id}-header`,
         title: product.name,
         milestones: [],
+        productId: id,
+        canEditProductName: canEditRoadmap(product, user),
+        indentationLevel: 0,
       });
       // Each version on subsequent lines (indented)
       if (byVersion.has('product')) {
         unifiedSections.push({
           key: `${id}-product`,
-          title: '  Product-level',
+          title: 'Product-level',
           milestones: byVersion.get('product')!,
+          showRedAsterisk: isDependentTargetSectionKeys.has(`${id}-product`),
+          showBlueAsterisk: false,
+          indentationLevel: 1,
+          productId: id,
         });
       }
       versions.forEach((v) => {
         if (byVersion.has(v.id)) {
+          const sectionKey = `${id}-${v.id}`;
           unifiedSections.push({
-            key: `${id}-${v.id}`,
-            title: `  Version ${v.version}`,
+            key: sectionKey,
+            title: `Version ${v.version}`,
             milestones: byVersion.get(v.id)!,
+            showRedAsterisk: isDependentTargetSectionKeys.has(sectionKey),
+            showBlueAsterisk: hasDependencySectionKeys.has(sectionKey),
+            indentationLevel: 1,
+            productId: id,
           });
         }
       });
     });
   }
+
+  // Enrich unified sections with dependency serial numbers (for asterisk superscript)
+  let unifiedSectionsToPass = unifiedSections;
+  if (showUnifiedGantt && unifiedSections.length > 0) {
+    const serialByKey = new Map(unifiedSections.map((s, i) => [s.key, i + 1]));
+    unifiedSectionsToPass = unifiedSections.map((s) => {
+      const blueKeys = blueDeps.get(s.key) ?? [];
+      const redKeys = redDeps.get(s.key) ?? [];
+      const depSerials = [
+        ...new Set(
+          [
+            ...blueKeys.map((k) => serialByKey.get(k)),
+            ...redKeys.map((k) => serialByKey.get(k)),
+          ].filter((n): n is number => n != null)
+        ),
+      ].sort((a, b) => a - b);
+      return {
+        ...s,
+        dependencySerialNumbers: depSerials.length > 0 ? depSerials : undefined,
+      };
+    });
+    // Filter by "show versions": always show product rows (headers); toggle only version rows (Product-level, Version X)
+    unifiedSectionsToPass = unifiedSectionsToPass.filter(
+      (s) => s.indentationLevel === 0 || (s.indentationLevel === 1 && s.productId != null && showVersionsForProduct(s.productId))
+    );
+  }
+
   const unifiedGanttLoading = showUnifiedGantt && milestonesQueries.some((q) => q.isLoading);
 
   if (!hasAny) {
@@ -451,20 +807,37 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
             <p className="text-slate-600 text-sm mt-0.5">One timeline for all products, versions, and dependencies.</p>
           </header>
           <div className="border-b-2 border-slate-200 bg-gradient-to-b from-sky-50/60 to-slate-50/40">
-            <div className="px-6 pt-5 pb-2 flex items-center gap-2">
+            <div className="px-6 pt-5 pb-2 flex items-center gap-4 flex-wrap">
               <span className="flex h-8 w-1 rounded-full bg-sky-500" aria-hidden />
               <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">
                 Gantt chart
               </h3>
+              <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={showVersionsInGantt}
+                  onChange={(e) => setShowVersionsInGantt(e.target.checked)}
+                  className="rounded border-slate-300 text-dhl-red focus:ring-dhl-red"
+                  aria-label="Show versions in Gantt chart"
+                />
+                Show versions
+              </label>
             </div>
             <div className="px-6 pb-6">
               {unifiedGanttLoading ? (
                 <p className="text-slate-500 text-center py-8">Loading unified Gantt…</p>
-              ) : unifiedSections.length > 0 ? (
+              ) : unifiedSectionsToPass.length > 0 ? (
                 <ProductGanttChart
-                  sections={unifiedSections}
+                  sections={unifiedSectionsToPass}
                   getVersionSectionBg={getVersionSectionBg}
                   dependencies={dependencies}
+                  showVersionsForProduct={showVersionsForProduct}
+                  onToggleProductVersions={toggleProductVersions}
+                  onEditProductName={(productId) => {
+                    const p = products.find((pr) => pr.id === productId);
+                    setEditingProductId(productId);
+                    setEditingProductName(p?.name ?? '');
+                  }}
                 />
               ) : (
                 <p className="text-slate-500 text-center py-8">No milestones in the selected products.</p>
@@ -474,20 +847,76 @@ export function RoadmapView({ productId, filters }: RoadmapViewProps) {
         </div>
       )}
 
-      {productIds.map((id) => {
-        const product = products.find((p) => p.id === id);
-        return product ? (
-          <ProductRoadmapSection
-            key={id}
-            productId={id}
-            product={product}
-            canEdit={canEditRoadmap(product, user)}
-            showDescription={!!productId && productId === id}
-            dependencies={dependencies}
-            penIconSvg={penIconSvg}
-          />
-        ) : null;
-      })}
+      {/* Individual product sections: only when not showing Unified Gantt (e.g. single product view) */}
+      {!showUnifiedGantt &&
+        productIds.map((id) => {
+          const product = products.find((p) => p.id === id);
+          return product ? (
+            <ProductRoadmapSection
+              key={id}
+              productId={id}
+              product={product}
+              canEdit={canEditRoadmap(product, user)}
+              showDescription={!!productId && productId === id}
+              dependencies={dependencies}
+              penIconSvg={penIconSvg}
+            />
+          ) : null;
+        })}
+
+      {/* Modal: edit product name (Unified Gantt — owner/admin) */}
+      {editingProductId != null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-product-name-title"
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h2 id="edit-product-name-title" className="text-lg font-semibold text-gray-900 mb-2">
+              Edit product name
+            </h2>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Product name</label>
+            <input
+              type="text"
+              value={editingProductName}
+              onChange={(e) => setEditingProductName(e.target.value)}
+              className="input mb-4 w-full"
+              placeholder="Product name"
+              aria-label="Product name"
+              autoFocus
+            />
+            {updateProductNameMutation.isError && (
+              <p className="text-red-600 text-sm mb-2" role="alert">
+                {updateProductNameMutation.error?.message ?? 'Update failed'}
+              </p>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingProductId(null);
+                  setEditingProductName('');
+                }}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (editingProductName.trim())
+                    updateProductNameMutation.mutate({ id: editingProductId, name: editingProductName.trim() });
+                }}
+                disabled={!editingProductName.trim() || updateProductNameMutation.isPending}
+                className="btn-primary disabled:opacity-50"
+              >
+                {updateProductNameMutation.isPending ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -576,7 +1005,7 @@ function ProductRoadmapSection({
               {canEdit && (
                 <Link
                   href={`/products/${productId}`}
-                  className="opacity-0 group-hover/product-header:opacity-100 group-focus-within/product-header:opacity-100 transition-opacity text-indigo-600 hover:text-indigo-700 p-1 rounded hover:bg-indigo-50"
+                  className="opacity-0 group-hover/product-header:opacity-100 group-focus-within/product-header:opacity-100 transition-opacity text-dhl-red p-1 rounded hover:bg-dhl-yellow/25"
                   aria-label="Edit roadmap"
                   title="Edit roadmap (add or change milestones)"
                 >
@@ -661,7 +1090,7 @@ function ProductRoadmapSection({
                   {canEdit && (
                     <Link
                       href={`/products/${productId}`}
-                      className="opacity-0 group-hover/version-section:opacity-100 group-focus-within/version-section:opacity-100 transition-opacity text-indigo-600 hover:text-indigo-700 p-0.5 rounded hover:bg-indigo-50"
+                      className="opacity-0 group-hover/version-section:opacity-100 group-focus-within/version-section:opacity-100 transition-opacity text-dhl-red p-0.5 rounded hover:bg-dhl-yellow/25"
                       aria-label="Edit roadmap"
                       title="Edit roadmap"
                     >
@@ -732,7 +1161,7 @@ function MilestoneCard({
             {canEdit && editHref && penIconSvg && (
               <Link
                 href={editHref}
-                className="opacity-0 group-hover/milestone-card:opacity-100 group-focus-within/milestone-card:opacity-100 transition-opacity text-indigo-600 hover:text-indigo-700 p-0.5 rounded hover:bg-indigo-50 shrink-0"
+                className="opacity-0 group-hover/milestone-card:opacity-100 group-focus-within/milestone-card:opacity-100 transition-opacity text-dhl-red p-0.5 rounded hover:bg-dhl-yellow/25 shrink-0"
                 aria-label="Edit milestone"
                 title="Edit milestone"
               >

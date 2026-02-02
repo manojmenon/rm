@@ -2,21 +2,21 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/auth';
-import { api, type Notification } from '@/lib/api';
+import { api } from '@/lib/api';
 import { getPendingCount } from '@/lib/requestUtils';
+import { GlobalSearch } from '@/components/GlobalSearch';
 import { useState, useLayoutEffect, useRef, useEffect } from 'react';
 
 export function Nav() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const queryClient = useQueryClient();
   const [hasToken, setHasToken] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const notifDropdownRef = useRef<HTMLDivElement>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     if (typeof window === 'undefined') return;
@@ -83,63 +83,27 @@ export function Nav() {
   });
   const unreadCount = notifCountRes?.count ?? 0;
 
-  const [notifViewArchived, setNotifViewArchived] = useState(false);
-  const { data: notifList, isLoading: notifLoading } = useQuery({
-    queryKey: ['notifications', notifViewArchived],
-    queryFn: () => api.notifications.list({ limit: 30, offset: 0, archived: notifViewArchived }),
-    enabled: !!user && notifOpen,
-    staleTime: 0,
-  });
-  const markReadMutation = useMutation({
-    mutationFn: (id: string) => api.notifications.markRead(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
-      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
-    },
-  });
-  const markReadAllMutation = useMutation({
-    mutationFn: () => api.notifications.markReadAll(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
-      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
-    },
-  });
-  const archiveMutation = useMutation({
-    mutationFn: (id: string) => api.notifications.archive(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
-      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
-    },
-  });
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.notifications.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
-      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
-    },
-  });
-
   useEffect(() => {
-    if (!notifOpen) return;
+    if (!userMenuOpen) return;
     const onDocClick = (e: MouseEvent) => {
-      if (notifDropdownRef.current && !notifDropdownRef.current.contains(e.target as Node)) {
-        setNotifOpen(false);
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
       }
     };
     document.addEventListener('click', onDocClick);
     return () => document.removeEventListener('click', onDocClick);
-  }, [notifOpen]);
+  }, [userMenuOpen]);
 
   const linkClass = (href: string) =>
     pathname === href
-      ? 'bg-dhl-yellow text-gray-900'
-      : 'text-gray-700 hover:bg-gray-100';
+      ? 'bg-dhl-yellow text-dhl-red font-semibold'
+      : 'text-dhl-red hover:bg-dhl-yellow/20 hover:text-dhl-red';
 
   const link = (href: string, label: string, badge?: number) => (
     <Link
       href={href}
       onClick={() => setMenuOpen(false)}
-      className={`block px-3 py-2.5 rounded-lg text-sm font-medium flex items-center gap-1.5 ${linkClass(href)}`}
+      className={`block px-3 py-2.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors ${linkClass(href)}`}
     >
       <span>{label}</span>
       {badge != null && badge > 0 && (
@@ -153,160 +117,120 @@ export function Nav() {
     </Link>
   );
 
+  const dropdownLink = (href: string, label: string, badge?: number) => (
+    <Link
+      href={href}
+      onClick={() => setUserMenuOpen(false)}
+      className={`block w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-between gap-2 transition-colors ${linkClass(href)}`}
+    >
+      <span>{label}</span>
+      {badge != null && badge > 0 && (
+        <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-bold text-white bg-dhl-red shrink-0">
+          {badge}
+        </span>
+      )}
+    </Link>
+  );
+
   return (
-    <nav className="border-b border-gray-200 bg-white sticky top-0 z-50">
+    <nav className="border-b-2 border-dhl-red bg-white sticky top-0 z-50 shadow-sm">
       <div className="container mx-auto px-4 flex items-center justify-between min-h-14 sm:min-h-14">
         <div className="flex items-center gap-2 min-w-0">
-          <Link href="/" className="font-semibold text-gray-900 shrink-0">
-            Roadmap
+          <Link
+            href="/"
+            className="flex items-center justify-center p-2 rounded-lg text-dhl-red hover:bg-dhl-yellow/20 shrink-0 focus:outline-none focus:ring-2 focus:ring-dhl-red focus:ring-offset-2 transition-colors"
+            aria-label="Home"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
+            </svg>
           </Link>
-          {/* Desktop nav links */}
+          {/* Desktop nav links: Roadmap, Products, Stats */}
           {user && (
             <div className="hidden md:flex items-center gap-1">
-              {link('/dashboard', 'Dashboard')}
-              {link('/products', 'Products', pendingRequestCount)}
               {link('/roadmap', 'Roadmap')}
-              {link('/groups', 'Groups')}
-              {link('/requests', 'Requests queue', pendingRequestCount)}
-              {link('/audit-logs', 'Audit logs')}
-              {link('/notifications', 'Notifications', unreadCount)}
-              {user.role === 'admin' && link('/admin', 'Admin')}
-              {user.role === 'admin' && link('/admin/users', 'Users')}
+              {link('/products', 'Products', pendingRequestCount)}
+              {link('/dashboard', 'Stats')}
             </div>
           )}
         </div>
 
-        <div className="hidden md:flex items-center gap-2 shrink-0">
+        <div className="hidden md:flex items-center justify-end gap-2 shrink-0">
           {user ? (
             <>
-              <div className="relative" ref={notifDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setNotifOpen((o) => !o)}
-                  className="flex items-center gap-1.5 min-h-[2.25rem] px-2 py-1.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red"
-                  aria-expanded={notifOpen}
-                  aria-haspopup="true"
-                  aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
-                >
-                  <span className="truncate max-w-[140px]">{user.name || user.email}</span>
-                  {unreadCount > 0 && (
-                    <span
-                      className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-xs font-bold text-white bg-dhl-red shrink-0"
-                      aria-hidden
-                    >
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
-                  <svg className="w-4 h-4 shrink-0 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {notifOpen && (
-                  <div
-                    className="absolute right-0 mt-1 w-[min(90vw,380px)] max-h-[min(70vh,420px)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg z-[60] flex flex-col"
-                    role="menu"
-                    aria-label="Notifications"
-                  >
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
-                      <span className="font-semibold text-gray-900">Notifications</span>
-                      {unreadCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => markReadAllMutation.mutate()}
-                          disabled={markReadAllMutation.isPending}
-                          className="text-xs font-medium text-dhl-red hover:underline disabled:opacity-50"
-                        >
-                          Mark all read
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex border-b border-gray-100">
-                      <button
-                        type="button"
-                        onClick={() => setNotifViewArchived(false)}
-                        className={`flex-1 px-3 py-2 text-sm font-medium ${!notifViewArchived ? 'text-dhl-red border-b-2 border-dhl-red' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        Inbox
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNotifViewArchived(true)}
-                        className={`flex-1 px-3 py-2 text-sm font-medium ${notifViewArchived ? 'text-dhl-red border-b-2 border-dhl-red' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        Archived
-                      </button>
-                    </div>
-                    <div className="overflow-y-auto flex-1 min-h-0">
-                      {notifLoading ? (
-                        <p className="px-4 py-6 text-sm text-gray-500 text-center">Loading…</p>
-                      ) : !notifList?.items?.length ? (
-                        <p className="px-4 py-6 text-sm text-gray-500 text-center">
-                          {notifViewArchived ? 'No archived messages.' : 'No notifications.'}
-                        </p>
-                      ) : (
-                        <ul className="divide-y divide-gray-100">
-                          {notifList.items.map((n: Notification) => (
-                            <li key={n.id} className="px-4 py-3 hover:bg-gray-50">
-                              <div className="flex gap-2">
-                                <div className={`flex-1 min-w-0 ${!n.read_at ? 'font-medium' : ''}`}>
-                                  <p className="text-sm text-gray-900">{n.title}</p>
-                                  <p className="text-sm text-gray-600 mt-0.5">{n.message}</p>
-                                  <p className="text-xs text-gray-400 mt-1">
-                                    {new Date(n.created_at).toLocaleString()}
-                                  </p>
-                                </div>
-                                <div className="flex flex-col gap-1 shrink-0">
-                                  {!n.read_at && (
-                                    <button
-                                      type="button"
-                                      onClick={() => markReadMutation.mutate(n.id)}
-                                      disabled={markReadMutation.isPending}
-                                      className="text-xs text-gray-500 hover:text-gray-700"
-                                      title="Mark as read"
-                                    >
-                                      Mark read
-                                    </button>
-                                  )}
-                                  {!notifViewArchived && !n.archived_at && (
-                                    <button
-                                      type="button"
-                                      onClick={() => archiveMutation.mutate(n.id)}
-                                      disabled={archiveMutation.isPending}
-                                      className="text-xs text-gray-500 hover:text-gray-700"
-                                      title="Archive"
-                                    >
-                                      Archive
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => deleteMutation.mutate(n.id)}
-                                    disabled={deleteMutation.isPending}
-                                    className="text-xs text-red-600 hover:text-red-700"
-                                    title="Delete"
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
+              <GlobalSearch />
+              <div className="relative" ref={userMenuRef}>
+              <button
+                type="button"
+                onClick={() => setUserMenuOpen((o) => !o)}
+                className="flex items-center gap-2 min-h-[2.25rem] px-2.5 py-1.5 rounded-lg text-sm font-medium text-dhl-red hover:bg-dhl-yellow/20 border border-transparent hover:border-dhl-red/30 focus:outline-none focus:ring-2 focus:ring-dhl-red focus:ring-offset-2 transition-colors"
+                aria-expanded={userMenuOpen}
+                aria-haspopup="true"
+                aria-label="User menu"
+              >
+                {(user as { avatar_url?: string; photo?: string }).avatar_url || (user as { avatar_url?: string; photo?: string }).photo ? (
+                  <img
+                    src={(user as { avatar_url?: string; photo?: string }).avatar_url || (user as { avatar_url?: string; photo?: string }).photo}
+                    alt=""
+                    className="w-8 h-8 rounded-full object-cover shrink-0 ring-2 ring-dhl-red/30"
+                    width={32}
+                    height={32}
+                  />
+                ) : (
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full bg-dhl-yellow/30 text-dhl-red shrink-0 ring-2 ring-dhl-red/30" aria-hidden>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </span>
                 )}
-              </div>
-              <button onClick={logout} className="btn-secondary text-sm">
-                Sign out
+                <svg className="w-4 h-4 shrink-0 text-dhl-red" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </button>
+              {userMenuOpen && (
+                <div
+                  className="absolute right-0 mt-1 w-56 rounded-xl border-2 border-dhl-red bg-white shadow-xl z-[60] overflow-hidden"
+                  role="menu"
+                  aria-label="User menu"
+                >
+                  <div className="p-2 bg-dhl-yellow/10">
+                    {(user.role === 'admin' || user.role === 'superadmin') && (
+                      <>
+                        {dropdownLink('/groups', 'Groups')}
+                        {dropdownLink('/requests', 'Requests queue', pendingRequestCount)}
+                        {dropdownLink('/audit-logs', 'Audit logs')}
+                        {dropdownLink('/activity-logs', 'Activity Logs')}
+                        {dropdownLink('/notifications', 'Notifications', unreadCount)}
+                        {dropdownLink('/admin/users', 'Users')}
+                        <div className="border-t border-dhl-red/30 my-2" aria-hidden />
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => { logout(); setUserMenuOpen(false); }}
+                      className="w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium text-dhl-red border-2 border-dhl-red hover:bg-dhl-red hover:text-white transition-colors"
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+              )}
+              </div>
             </>
           ) : (
             <>
-              <Link href="/login" className="btn-secondary text-sm">
+              <Link
+                href="/login"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-dhl-red border-2 border-dhl-red hover:bg-dhl-yellow/20 focus:outline-none focus:ring-2 focus:ring-dhl-red focus:ring-offset-2 transition-colors"
+              >
                 Sign in
               </Link>
-              <Link href="/register" className="btn-primary text-sm">
+              <Link
+                href="/register"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-dhl-red border-2 border-dhl-red hover:bg-dhl-red/90 focus:outline-none focus:ring-2 focus:ring-dhl-yellow focus:ring-offset-2 transition-colors"
+              >
                 Register
               </Link>
             </>
@@ -316,14 +240,17 @@ export function Nav() {
         {/* Mobile: hamburger + optional email */}
         <div className="flex md:hidden items-center gap-2">
           {user && (
-            <span className="text-xs text-gray-500 truncate max-w-[100px] sm:max-w-[120px]" title={user.email}>
-              {user.email}
-            </span>
+            <>
+              <span className="text-xs text-dhl-red/80 truncate max-w-[100px] sm:max-w-[120px] font-medium" title={user.email}>
+                {user.email}
+              </span>
+              <GlobalSearch />
+            </>
           )}
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
-            className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 focus:ring-2 focus:ring-dhl-red focus:ring-offset-2"
+            className="p-2 rounded-lg text-dhl-red hover:bg-dhl-yellow/20 focus:ring-2 focus:ring-dhl-red focus:ring-offset-2 transition-colors"
             aria-label={menuOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={menuOpen}
           >
@@ -341,34 +268,50 @@ export function Nav() {
       {/* Mobile / tablet dropdown */}
       {menuOpen && (
         <div
-          className="md:hidden border-t border-gray-200 bg-white"
+          className="md:hidden border-t-2 border-dhl-red/50 bg-dhl-yellow/5"
           role="dialog"
           aria-label="Navigation menu"
         >
           <div className="container mx-auto px-4 py-3 flex flex-col gap-1 max-h-[min(70vh,400px)] overflow-y-auto">
             {user ? (
               <>
-                {link('/dashboard', 'Dashboard')}
-                {link('/products', 'Products', pendingRequestCount)}
                 {link('/roadmap', 'Roadmap')}
-                {link('/groups', 'Groups')}
-                {link('/requests', 'Requests queue', pendingRequestCount)}
-                {link('/audit-logs', 'Audit logs')}
-                {link('/notifications', 'Notifications', unreadCount)}
-                {user.role === 'admin' && link('/admin', 'Admin')}
-                {user.role === 'admin' && link('/admin/users', 'Users')}
-                <div className="pt-2 mt-2 border-t border-gray-200 flex flex-col gap-2">
-                  <button onClick={() => { logout(); setMenuOpen(false); }} className="btn-secondary text-sm w-full text-left px-3 py-2.5">
+                {link('/products', 'Products', pendingRequestCount)}
+                {link('/dashboard', 'Stats')}
+                {(user.role === 'admin' || user.role === 'superadmin') && (
+                  <>
+                    <div className="border-t border-dhl-red/30 mt-2 pt-2" aria-hidden />
+                    {link('/groups', 'Groups')}
+                    {link('/requests', 'Requests queue', pendingRequestCount)}
+                    {link('/audit-logs', 'Audit logs')}
+                    {link('/activity-logs', 'Activity Logs')}
+                    {link('/notifications', 'Notifications', unreadCount)}
+                    {link('/admin/users', 'Users')}
+                  </>
+                )}
+                <div className="pt-2 mt-2 border-t-2 border-dhl-red/30 flex flex-col gap-2">
+                  <button
+                    onClick={() => { logout(); setMenuOpen(false); }}
+                    className="w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium text-dhl-red border-2 border-dhl-red hover:bg-dhl-red hover:text-white transition-colors"
+                  >
                     Sign out
                   </button>
                 </div>
               </>
             ) : (
               <div className="flex flex-col gap-2 pt-2">
-                <Link href="/login" onClick={() => setMenuOpen(false)} className="btn-secondary text-sm text-center py-2.5">
+                <Link
+                  href="/login"
+                  onClick={() => setMenuOpen(false)}
+                  className="px-4 py-2.5 rounded-lg text-sm font-medium text-dhl-red border-2 border-dhl-red hover:bg-dhl-yellow/20 text-center transition-colors"
+                >
                   Sign in
                 </Link>
-                <Link href="/register" onClick={() => setMenuOpen(false)} className="btn-primary text-sm text-center py-2.5">
+                <Link
+                  href="/register"
+                  onClick={() => setMenuOpen(false)}
+                  className="px-4 py-2.5 rounded-lg text-sm font-medium text-white bg-dhl-red border-2 border-dhl-red hover:bg-dhl-red/90 text-center transition-colors"
+                >
                   Register
                 </Link>
               </div>

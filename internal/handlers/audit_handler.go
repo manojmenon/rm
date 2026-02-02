@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rm/roadmap/internal/dto"
 	"github.com/rm/roadmap/internal/middleware"
+	"github.com/rm/roadmap/internal/models"
 	"github.com/rm/roadmap/internal/services"
 )
 
@@ -132,7 +133,7 @@ func (h *AuditHandler) DeleteArchived(c *gin.Context) {
 		return
 	}
 	callerID, callerRole := h.getCaller(c)
-	if callerRole != "admin" {
+	if !models.Role(callerRole).IsAdminOrAbove() {
 		c.JSON(http.StatusForbidden, gin.H{"error": "only admins can delete archived logs"})
 		return
 	}

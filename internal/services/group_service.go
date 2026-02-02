@@ -64,7 +64,7 @@ func (s *GroupService) GetByID(id uuid.UUID, callerID uuid.UUID, callerRole mode
 
 func (s *GroupService) List(callerID uuid.UUID, callerRole models.Role) ([]dto.GroupResponse, error) {
 	var createdBy *uuid.UUID
-	if callerRole != models.RoleAdmin {
+	if !callerRole.IsAdminOrAbove() {
 		createdBy = &callerID
 	}
 	list, err := s.repo.List(createdBy)
@@ -83,7 +83,7 @@ func (s *GroupService) Update(id uuid.UUID, req dto.GroupUpdateRequest, callerID
 	if err != nil {
 		return nil, ErrGroupNotFound
 	}
-	if callerRole != models.RoleAdmin && (g.CreatedBy == nil || *g.CreatedBy != callerID) {
+	if !callerRole.IsAdminOrAbove() && (g.CreatedBy == nil || *g.CreatedBy != callerID) {
 		return nil, ErrForbidden
 	}
 	if req.Name != nil {
@@ -120,7 +120,7 @@ func (s *GroupService) Delete(id uuid.UUID, callerID uuid.UUID, callerRole model
 	if err != nil {
 		return ErrGroupNotFound
 	}
-	if callerRole != models.RoleAdmin && (g.CreatedBy == nil || *g.CreatedBy != callerID) {
+	if !callerRole.IsAdminOrAbove() && (g.CreatedBy == nil || *g.CreatedBy != callerID) {
 		return ErrForbidden
 	}
 	return s.repo.Delete(id)

@@ -26,11 +26,12 @@ type ProductService struct {
 	groupRepo       repositories.GroupRepository
 	milestoneRepo   repositories.MilestoneRepository
 	auditSvc        *AuditService
+	activitySvc     *ActivityService
 	notificationSvc *NotificationService
 }
 
-func NewProductService(productRepo repositories.ProductRepository, versionRepo repositories.ProductVersionRepository, deletionReqRepo repositories.ProductDeletionRequestRepository, groupRepo repositories.GroupRepository, milestoneRepo repositories.MilestoneRepository, auditSvc *AuditService, notificationSvc *NotificationService) *ProductService {
-	return &ProductService{productRepo: productRepo, versionRepo: versionRepo, deletionReqRepo: deletionReqRepo, groupRepo: groupRepo, milestoneRepo: milestoneRepo, auditSvc: auditSvc, notificationSvc: notificationSvc}
+func NewProductService(productRepo repositories.ProductRepository, versionRepo repositories.ProductVersionRepository, deletionReqRepo repositories.ProductDeletionRequestRepository, groupRepo repositories.GroupRepository, milestoneRepo repositories.MilestoneRepository, auditSvc *AuditService, activitySvc *ActivityService, notificationSvc *NotificationService) *ProductService {
+	return &ProductService{productRepo: productRepo, versionRepo: versionRepo, deletionReqRepo: deletionReqRepo, groupRepo: groupRepo, milestoneRepo: milestoneRepo, auditSvc: auditSvc, activitySvc: activitySvc, notificationSvc: notificationSvc}
 }
 
 func (s *ProductService) Create(ctx context.Context, req dto.ProductCreateRequest, ownerID *uuid.UUID, isAdmin bool, meta dto.AuditMeta) (*dto.ProductResponse, error) {
@@ -73,6 +74,17 @@ func (s *ProductService) Create(ctx context.Context, req dto.ProductCreateReques
 			TraceID:    meta.TraceID,
 		})
 	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "create",
+			EntityType: "product",
+			EntityID:   p.ID.String(),
+			Details:    p.Name,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
+		})
+	}
 	return resp, nil
 }
 
@@ -97,19 +109,26 @@ func (s *ProductService) GetByID(id uuid.UUID) (*dto.ProductResponse, error) {
 	return resp, nil
 }
 
-func (s *ProductService) List(ownerID *uuid.UUID, status *models.ProductStatus, lifecycleStatus *models.LifecycleStatus, category1, category2, category3 *string, groupID *uuid.UUID, dateFrom, dateTo *time.Time, sortBy, order string, callerID uuid.UUID, callerRole models.Role, limit, offset int) (*dto.PageResult[dto.ProductResponse], error) {
+func (s *ProductService) List(ownerID *uuid.UUID, status *models.ProductStatus, lifecycleStatus *models.LifecycleStatus, category1, category2, category3 *string, groupID *uuid.UUID, ungroupedOnly bool, dateFrom, dateTo *time.Time, sortBy, order string, callerID uuid.UUID, callerRole models.Role, limit, offset int) (*dto.PageResult[dto.ProductResponse], error) {
 	if callerRole == models.RoleOwner && ownerID == nil {
 		ownerID = &callerID
 	}
 	var productIDs *[]uuid.UUID
+	var excludedProductIDs *[]uuid.UUID
 	if groupID != nil && s.groupRepo != nil {
 		ids, err := s.groupRepo.GetProductIDs(*groupID)
 		if err != nil {
 			return nil, err
 		}
 		productIDs = &ids
+	} else if ungroupedOnly && s.groupRepo != nil {
+		ids, err := s.groupRepo.GetAllProductIDsInAnyGroup()
+		if err != nil {
+			return nil, err
+		}
+		excludedProductIDs = &ids
 	}
-	products, total, err := s.productRepo.List(ownerID, status, lifecycleStatus, category1, category2, category3, productIDs, dateFrom, dateTo, sortBy, order, limit, offset)
+	products, total, err := s.productRepo.List(ownerID, status, lifecycleStatus, category1, category2, category3, productIDs, excludedProductIDs, dateFrom, dateTo, sortBy, order, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +144,8 @@ func (s *ProductService) Update(ctx context.Context, id uuid.UUID, req dto.Produ
 	if err != nil {
 		return nil, err
 	}
-	// Admin can always update. Product owner can update only when assigned and (other checks below).
-	if callerRole != models.RoleAdmin && (p.OwnerID == nil || *p.OwnerID != callerID) {
+	// Admin/superadmin can always update. Product owner can update only when assigned and (other checks below).
+	if !callerRole.IsAdminOrAbove() && (p.OwnerID == nil || *p.OwnerID != callerID) {
 		return nil, ErrForbidden
 	}
 	if callerRole == models.RoleOwner && req.Status != nil {
@@ -186,8 +205,19 @@ func (s *ProductService) Update(ctx context.Context, id uuid.UUID, req dto.Produ
 			TraceID:    meta.TraceID,
 		})
 	}
-	// When admin changes status, lifecycle, or owner, notify the product owner (the selected user)
-	if callerRole == models.RoleAdmin && s.notificationSvc != nil && fresh.OwnerID != nil {
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "save",
+			EntityType: "product",
+			EntityID:   id.String(),
+			Details:    fresh.Name,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
+		})
+	}
+	// When admin/superadmin changes status, lifecycle, or owner, notify the product owner (the selected user)
+	if callerRole.IsAdminOrAbove() && s.notificationSvc != nil && fresh.OwnerID != nil {
 		statusChanged := req.Status != nil && (oldResp.Status != newResp.Status)
 		lifecycleChanged := req.LifecycleStatus != nil && (oldResp.LifecycleStatus != newResp.LifecycleStatus)
 		oldOwnerStr, newOwnerStr := "", ""
@@ -219,7 +249,7 @@ func (s *ProductService) Update(ctx context.Context, id uuid.UUID, req dto.Produ
 var ErrProductHasVersions = errors.New("product has versions; delete all versions first")
 
 func (s *ProductService) Delete(ctx context.Context, id uuid.UUID, callerRole models.Role, meta dto.AuditMeta) error {
-	if callerRole != models.RoleAdmin {
+	if !callerRole.IsAdminOrAbove() {
 		return ErrForbidden
 	}
 	n, err := s.versionRepo.CountByProductID(id)
@@ -247,6 +277,21 @@ func (s *ProductService) Delete(ctx context.Context, id uuid.UUID, callerRole mo
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		details := ""
+		if p != nil {
+			details = p.Name
+		}
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "delete",
+			EntityType: "product",
+			EntityID:   id.String(),
+			Details:    details,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	return nil

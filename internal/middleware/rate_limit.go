@@ -3,7 +3,6 @@ package middleware
 import (
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -38,7 +37,8 @@ func (rl *rateLimiter) get(key string) *rate.Limiter {
 	return l
 }
 
-var defaultLimiter = newRateLimiter(rate.Every(time.Second), 100)
+// 600 req/s per IP with burst 600 so dashboard (global + my + per-user stats), products, roadmap don't hit 429
+var defaultLimiter = newRateLimiter(rate.Limit(600), 600)
 
 func RateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {

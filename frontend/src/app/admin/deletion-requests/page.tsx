@@ -123,7 +123,7 @@ function DeletionRequestsContent() {
 export default function DeletionRequestsPage() {
   return (
     <RequireAuth>
-      <RequireRole allowedRoles={['admin']}>
+      <RequireRole allowedRoles={['admin', 'superadmin']}>
         <DeletionRequestsContent />
       </RequireRole>
     </RequireAuth>

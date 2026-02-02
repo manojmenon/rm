@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { RequireAuth } from '@/components/RequireAuth';
 import { RequireRole } from '@/components/RequireRole';
+import { useAuthStore } from '@/store/auth';
 import {
   api,
   type User,
@@ -35,7 +36,9 @@ function UsersPageContent() {
   const [functionCompanyError, setFunctionCompanyError] = useState('');
   const [filterFunctionId, setFilterFunctionId] = useState('');
   const [departmentFunctionError, setDepartmentFunctionError] = useState('');
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
 
+  const { user: currentUser } = useAuthStore();
   const { data: holdings = [] } = useQuery({
     queryKey: ['holding-companies'],
     queryFn: () => api.holdingCompanies.list(),
@@ -167,6 +170,21 @@ function UsersPageContent() {
   const removeDotted = useMutation({
     mutationFn: ({ userId, managerId }: { userId: string; managerId: string }) => api.users.removeDottedLineManager(userId, managerId),
     onSuccess: (_, v) => queryClient.invalidateQueries({ queryKey: ['users', v.userId, 'dotted-line'] }),
+  });
+  const removeFromProducts = useMutation({
+    mutationFn: (userId: string) => api.users.removeFromProducts(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+  const deleteUser = useMutation({
+    mutationFn: (userId: string) => api.users.delete(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setConfirmDeleteUserId(null);
+      setEditingUserId(null);
+    },
   });
 
   const startEditHolding = (h: HoldingCompany) => {
@@ -613,45 +631,92 @@ function UsersPageContent() {
       )}
 
       {mainTab === 'Users' && (
-        <div className="card">
-          <h3 className="font-semibold mb-3">Users</h3>
-          <p className="text-sm text-gray-600 mb-4">Assign team, direct manager (one), and dotted-line managers (multiple). Manager hierarchy is up to 10 levels.</p>
+        <div className="rounded-xl border-2 border-dhl-red/30 bg-white shadow-sm overflow-hidden">
+          <h3 className="font-semibold mb-3 px-4 pt-4 text-dhl-red">Users</h3>
+          <p className="text-sm text-gray-600 mb-4 px-4">Assign team, direct manager (one), and dotted-line managers (multiple). Manager hierarchy is up to 10 levels.</p>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-              <thead className="bg-gray-50 border-b">
+            <table className="w-full min-w-[720px]">
+              <thead className="bg-dhl-yellow/25 border-b-2 border-dhl-red/40">
                 <tr>
-                  <th className="text-left py-2 px-3 font-medium text-gray-700">Name</th>
-                  <th className="text-left py-2 px-3 font-medium text-gray-700">Email</th>
-                  <th className="text-left py-2 px-3 font-medium text-gray-700">Role</th>
-                  <th className="text-left py-2 px-3 font-medium text-gray-700">Team</th>
-                  <th className="text-left py-2 px-3 font-medium text-gray-700">Direct Manager</th>
-                  <th className="text-left py-2 px-3 font-medium text-gray-700 w-20">Edit</th>
+                  <th className="text-left py-2 px-3 font-medium text-dhl-red">Name</th>
+                  <th className="text-left py-2 px-3 font-medium text-dhl-red">Email</th>
+                  <th className="text-left py-2 px-3 font-medium text-dhl-red">Role</th>
+                  <th className="text-left py-2 px-3 font-medium text-dhl-red">Team</th>
+                  <th className="text-left py-2 px-3 font-medium text-dhl-red">Direct Manager</th>
+                  <th className="text-left py-2 px-3 font-medium text-dhl-red w-20">Edit</th>
+                  <th className="text-left py-2 px-3 font-medium text-dhl-red w-48">Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id} className="border-b last:border-0">
-                    <td className="py-2 px-3">{u.name}</td>
-                    <td className="py-2 px-3">{u.email}</td>
-                    <td className="py-2 px-3">{u.role}</td>
-                    <td className="py-2 px-3">{teams.find((t) => t.id === u.team_id)?.name ?? (u.team_id || '—')}</td>
-                    <td className="py-2 px-3">{users.find((m) => m.id === u.direct_manager_id)?.name ?? (u.direct_manager_id ? '—' : '—')}</td>
-                    <td className="py-2 px-3">
-                      <button type="button" onClick={() => startEditUser(u)} className="text-sm text-indigo-600 hover:underline">Edit</button>
-                    </td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-dhl-red/20">
+                {users.map((u) => {
+                  const isSelf = currentUser?.id === u.id;
+                  const isSuperadmin = (u.role ?? '').toLowerCase() === 'superadmin';
+                  const canRemoveUser = !isSelf && !isSuperadmin;
+                  return (
+                    <tr key={u.id} className="hover:bg-dhl-yellow/10">
+                      <td className="py-2 px-3 text-slate-800">{u.name}</td>
+                      <td className="py-2 px-3 text-slate-700">{u.email}</td>
+                      <td className="py-2 px-3 text-slate-700">{u.role}</td>
+                      <td className="py-2 px-3 text-slate-700">{teams.find((t) => t.id === u.team_id)?.name ?? (u.team_id || '—')}</td>
+                      <td className="py-2 px-3 text-slate-700">{users.find((m) => m.id === u.direct_manager_id)?.name ?? (u.direct_manager_id ? '—' : '—')}</td>
+                      <td className="py-2 px-3">
+                        <button type="button" onClick={() => startEditUser(u)} className="text-sm text-dhl-red hover:underline font-medium">Edit</button>
+                      </td>
+                      <td className="py-2 px-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => removeFromProducts.mutate(u.id)}
+                            disabled={removeFromProducts.isPending}
+                            className="text-sm text-dhl-red hover:underline font-medium border border-dhl-red/50 px-2 py-1 rounded hover:bg-dhl-yellow/20 disabled:opacity-50"
+                          >
+                            Remove from products
+                          </button>
+                          {canRemoveUser ? (
+                            confirmDeleteUserId === u.id ? (
+                              <span className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => deleteUser.mutate(u.id)}
+                                  disabled={deleteUser.isPending}
+                                  className="text-sm text-white bg-dhl-red px-2 py-1 rounded hover:opacity-90 disabled:opacity-50"
+                                >
+                                  Confirm delete
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteUserId(null)}
+                                  className="text-sm text-slate-600 hover:underline"
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteUserId(u.id)}
+                                className="text-sm text-dhl-red hover:underline font-medium"
+                              >
+                                Remove user
+                              </button>
+                            )
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
           {editingUserId && (
-            <div className="mt-6 p-4 border border-gray-200 rounded-xl bg-gray-50">
-              <h4 className="font-medium mb-3">Edit user: {users.find((u) => u.id === editingUserId)?.name}</h4>
+            <div className="mt-6 mx-4 mb-4 p-4 border-2 border-dhl-red/30 rounded-xl bg-dhl-yellow/10">
+              <h4 className="font-medium mb-3 text-dhl-red">Edit user: {users.find((u) => u.id === editingUserId)?.name}</h4>
               <div className="grid gap-3 max-w-md">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Team</label>
-                  <select value={userTeamId} onChange={(e) => setUserTeamId(e.target.value)} className="input w-full">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Team</label>
+                  <select value={userTeamId} onChange={(e) => setUserTeamId(e.target.value)} className="input w-full border-dhl-red/40 focus:ring-dhl-red focus:border-dhl-red">
                     <option value="">No team</option>
                     {teams.map((t) => (
                       <option key={t.id} value={t.id}>{t.name}</option>
@@ -659,8 +724,8 @@ function UsersPageContent() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Direct Manager (one)</label>
-                  <select value={userDirectManagerId} onChange={(e) => setUserDirectManagerId(e.target.value)} className="input w-full">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Direct Manager (one)</label>
+                  <select value={userDirectManagerId} onChange={(e) => setUserDirectManagerId(e.target.value)} className="input w-full border-dhl-red/40 focus:ring-dhl-red focus:border-dhl-red">
                     <option value="">No direct manager</option>
                     {users.filter((u) => u.id !== editingUserId).map((u) => (
                       <option key={u.id} value={u.id}>{u.name}</option>
@@ -672,26 +737,26 @@ function UsersPageContent() {
                     type="button"
                     onClick={() => updateUser.mutate({ id: editingUserId, body: { team_id: userTeamId || '', direct_manager_id: userDirectManagerId || '' } })}
                     disabled={updateUser.isPending}
-                    className="btn-primary"
+                    className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-dhl-red hover:opacity-90 focus:ring-2 focus:ring-dhl-yellow focus:ring-offset-2"
                   >
                     Save
                   </button>
-                  <button type="button" onClick={() => setEditingUserId(null)} className="btn-secondary">Cancel</button>
+                  <button type="button" onClick={() => setEditingUserId(null)} className="px-4 py-2 rounded-lg text-sm font-medium text-dhl-red border-2 border-dhl-red hover:bg-dhl-yellow/20">Cancel</button>
                 </div>
               </div>
-              <div className="mt-4 pt-4 border-t border-gray-200">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Dotted-line managers</label>
+              <div className="mt-4 pt-4 border-t border-dhl-red/30">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Dotted-line managers</label>
                 <ul className="list-disc list-inside text-sm text-gray-600 mb-2">
                   {dottedLine.map((d) => (
                     <li key={d.id} className="flex items-center gap-2">
                       {d.manager?.name ?? d.manager_id}
-                      <button type="button" onClick={() => removeDotted.mutate({ userId: editingUserId, managerId: d.manager_id })} className="text-red-600 hover:underline">Remove</button>
+                      <button type="button" onClick={() => removeDotted.mutate({ userId: editingUserId, managerId: d.manager_id })} className="text-dhl-red hover:underline font-medium">Remove</button>
                     </li>
                   ))}
                   {dottedLine.length === 0 && <li className="text-gray-500">None</li>}
                 </ul>
                 <div className="flex gap-2">
-                  <select value={newDottedManagerId} onChange={(e) => setNewDottedManagerId(e.target.value)} className="input flex-1 max-w-xs">
+                  <select value={newDottedManagerId} onChange={(e) => setNewDottedManagerId(e.target.value)} className="input flex-1 max-w-xs border-dhl-red/40 focus:ring-dhl-red focus:border-dhl-red">
                     <option value="">Add dotted-line manager</option>
                     {users.filter((u) => u.id !== editingUserId && !dottedLine.some((d) => d.manager_id === u.id)).map((u) => (
                       <option key={u.id} value={u.id}>{u.name}</option>
@@ -701,7 +766,7 @@ function UsersPageContent() {
                     type="button"
                     onClick={() => newDottedManagerId && addDotted.mutate({ userId: editingUserId, managerId: newDottedManagerId })}
                     disabled={!newDottedManagerId || addDotted.isPending}
-                    className="btn-secondary"
+                    className="px-4 py-2 rounded-lg text-sm font-medium text-dhl-red border-2 border-dhl-red hover:bg-dhl-yellow/20"
                   >
                     Add
                   </button>
@@ -718,7 +783,7 @@ function UsersPageContent() {
 export default function AdminUsersPage() {
   return (
     <RequireAuth>
-      <RequireRole allowedRoles={['admin']}>
+      <RequireRole allowedRoles={['admin', 'superadmin']}>
         <UsersPageContent />
       </RequireRole>
     </RequireAuth>

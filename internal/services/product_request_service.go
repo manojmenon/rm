@@ -16,6 +16,7 @@ type ProductRequestService struct {
 	productRepo     repositories.ProductRepository
 	userRepo        repositories.UserRepository
 	auditSvc        *AuditService
+	activitySvc     *ActivityService
 	notificationSvc *NotificationService
 }
 
@@ -24,9 +25,10 @@ func NewProductRequestService(
 	productRepo repositories.ProductRepository,
 	userRepo repositories.UserRepository,
 	auditSvc *AuditService,
+	activitySvc *ActivityService,
 	notificationSvc *NotificationService,
 ) *ProductRequestService {
-	return &ProductRequestService{reqRepo: reqRepo, productRepo: productRepo, userRepo: userRepo, auditSvc: auditSvc, notificationSvc: notificationSvc}
+	return &ProductRequestService{reqRepo: reqRepo, productRepo: productRepo, userRepo: userRepo, auditSvc: auditSvc, activitySvc: activitySvc, notificationSvc: notificationSvc}
 }
 
 func (s *ProductRequestService) Create(ctx context.Context, req dto.ProductRequestCreateRequest, userID uuid.UUID, meta dto.AuditMeta) (*dto.ProductRequestResponse, error) {
@@ -52,15 +54,32 @@ func (s *ProductRequestService) Create(ctx context.Context, req dto.ProductReque
 			TraceID:    meta.TraceID,
 		})
 	}
-	// Notify Admin users only (so they can review and approve/reject)
+	if s.activitySvc != nil && meta.UserID != nil {
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     "create",
+			EntityType: "product_request",
+			EntityID:   r.ID.String(),
+			Details:    r.Name,
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
+		})
+	}
+	// Notify admin and superadmin users (so they can review and approve/reject)
 	if s.notificationSvc != nil && s.userRepo != nil {
 		admins, _ := s.userRepo.ListByRole(models.RoleAdmin)
+		superadmins, _ := s.userRepo.ListByRole(models.RoleSuperadmin)
 		reqID := r.ID
 		title := "New product creation request"
 		message := "A user has submitted a product creation request: \"" + r.Name + "\". Review and approve or reject from the Requests page."
 		for i := range admins {
 			if admins[i].ID != userID {
 				_, _ = s.notificationSvc.Create(admins[i].ID, models.NotificationTypeProductRequestSubmitted, title, message, "product_request", &reqID)
+			}
+		}
+		for i := range superadmins {
+			if superadmins[i].ID != userID {
+				_, _ = s.notificationSvc.Create(superadmins[i].ID, models.NotificationTypeProductRequestSubmitted, title, message, "product_request", &reqID)
 			}
 		}
 	}
@@ -79,7 +98,7 @@ func (s *ProductRequestService) List(status *models.RequestStatus, callerID uuid
 	var requestedBy *uuid.UUID
 	if ownerID != nil {
 		requestedBy = ownerID
-	} else if strings.ToLower(callerRole) != "admin" {
+	} else if !models.Role(strings.ToLower(callerRole)).IsAdminOrAbove() {
 		requestedBy = &callerID
 	}
 	list, err := s.reqRepo.List(status, requestedBy, fromDate, toDate)
@@ -132,6 +151,18 @@ func (s *ProductRequestService) Approve(ctx context.Context, id uuid.UUID, appro
 			IPAddress:  meta.IP,
 			UserAgent:  meta.UserAgent,
 			TraceID:    meta.TraceID,
+		})
+	}
+	if s.activitySvc != nil && meta.UserID != nil {
+		action := "save"
+		s.activitySvc.Log(ctx, ActivityEntry{
+			UserID:     meta.UserID,
+			Action:     action,
+			EntityType: "product_request",
+			EntityID:   id.String(),
+			Details:    r.Name + " " + string(r.Status),
+			IPAddress:  meta.IP,
+			UserAgent:  meta.UserAgent,
 		})
 	}
 	if s.notificationSvc != nil {

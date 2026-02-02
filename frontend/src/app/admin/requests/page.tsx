@@ -75,7 +75,7 @@ function requestKey(r: UnifiedRequest) {
 export function RequestQueueContent() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = (() => { const r = user?.role?.toLowerCase(); return r === 'admin' || r === 'superadmin'; })();
   const isRequestsPage = pathname === '/requests';
 
   const queryClient = useQueryClient();
@@ -428,7 +428,7 @@ export function RequestQueueContent() {
                           onClick={() =>
                             setEditingRequestKey((k) => (k === key ? null : key))
                           }
-                          className="p-1.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-400"
+                          className="p-1.5 rounded text-dhl-red hover:bg-dhl-yellow/25 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-dhl-red"
                           title={isEditing ? 'Done editing' : 'Edit status and owner'}
                           aria-label={isEditing ? 'Done editing' : 'Edit'}
                         >
@@ -500,7 +500,7 @@ export function RequestQueueContent() {
 export default function AdminRequestsPage() {
   return (
     <RequireAuth>
-      <RequireRole allowedRoles={['admin']}>
+      <RequireRole allowedRoles={['admin', 'superadmin']}>
         <RequestQueueContent />
       </RequireRole>
     </RequireAuth>

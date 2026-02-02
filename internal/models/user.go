@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,10 +11,17 @@ import (
 type Role string
 
 const (
-	RoleAdmin Role = "admin"
-	RoleOwner Role = "owner"
-	RoleUser  Role = "user"
+	RoleSuperadmin Role = "superadmin"
+	RoleAdmin      Role = "admin"
+	RoleOwner      Role = "owner"
+	RoleUser       Role = "user"
 )
+
+// IsAdminOrAbove returns true for admin or superadmin (hierarchy: user < owner < admin < superadmin).
+func (r Role) IsAdminOrAbove() bool {
+	s := strings.ToLower(string(r))
+	return s == "admin" || s == "superadmin"
+}
 
 type User struct {
 	ID               uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
