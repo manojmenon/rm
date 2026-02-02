@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS product_requests;
+DROP TABLE IF EXISTS dependencies;
+DROP TABLE IF EXISTS milestones;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS users;
